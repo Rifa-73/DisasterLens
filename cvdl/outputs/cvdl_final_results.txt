@@ -1,0 +1,21 @@
+CVDL FULL VALIDATION RESULTS
+============================================================
+
+Validation Images: 450
+Pixel Accuracy: 0.8521
+Foreground mIoU: 0.5932
+Flooded Classes mIoU: 0.4303
+Non-Flooded Classes mIoU: 0.6680
+
+Per-Class IoU
+------------------------------------------------------------
+Background                : 0.0000
+Building-Flooded          : 0.5257
+Building-Non-Flooded      : 0.6080
+Road-Flooded              : 0.3349
+Road-Non-Flooded          : 0.7279
+Water                     : 0.5957
+Tree                      : 0.7583
+Vehicle                   : 0.4202
+Pool                      : 0.5270
+Grass                     : 0.8409
