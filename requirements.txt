@@ -3,3 +3,7 @@ uvicorn[standard]
 python-multipart
 pydantic
 sqlalchemy
+torch 
+torchvision 
+pillow 
+numpy 

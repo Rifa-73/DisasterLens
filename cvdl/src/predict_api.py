@@ -57,7 +57,7 @@ from models.cvdl_model import FloodNetUNet
 # ============================================================
 
 NUM_CLASSES = 10
-IMAGE_SIZE = (256, 256)
+IMAGE_SIZE = (512, 512)
 
 CLASS_NAMES = [
     "Background",
@@ -105,7 +105,7 @@ class FloodPredictor:
 
         self.model = FloodNetUNet(num_classes=NUM_CLASSES)
 
-        checkpoint = torch.load(self.model_path, map_location=self.device)
+        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
 
         # Support both raw state_dict and full checkpoint dict formats
         if "model_state_dict" in checkpoint:
