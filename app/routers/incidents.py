@@ -2,6 +2,10 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from pydantic import BaseModel
+from app.services.gemini_service import chat_with_gemini
+from app.services.gemini_service import analyze_image
+
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, Query
 from sqlalchemy.orm import Session
 
@@ -82,7 +86,7 @@ async def _save_optional_media(
     return f"media/{kind}/{unique_name}"
 
 
-def _to_incident_out(db_incident: Incident, severity: SeverityResult) -> IncidentOut:
+def _to_incident_out(db_incident: Incident, severity: SeverityResult, ai_assessment=None) -> IncidentOut:
     return IncidentOut(
         id=db_incident.id,
         latitude=db_incident.latitude,
@@ -91,6 +95,7 @@ def _to_incident_out(db_incident: Incident, severity: SeverityResult) -> Inciden
         severity=severity,
         audio_url=f"/{db_incident.audio_path}" if db_incident.audio_path else None,
         video_url=f"/{db_incident.video_path}" if db_incident.video_path else None,
+        ai_assessment=ai_assessment,
     )
 
 
@@ -119,12 +124,13 @@ async def report_incident(
     Full flow: upload an image (required) with location -> assess severity ->
     save to DB. Audio and video are optional extra evidence - they are saved
     alongside the incident but are NOT analyzed by the AI model (which only
-    understands images).
+    understands images). A Gemini-based assessment also runs on the image.
     """
     image_bytes = await file.read()
     _validate_image(file, image_bytes)
 
     severity = assess_flood_severity(image_bytes)
+    ai_assessment = analyze_image(image_bytes, description or "")
 
     audio_path = await _save_optional_media(audio, "audio", ALLOWED_AUDIO_TYPES, MAX_AUDIO_SIZE_MB)
     video_path = await _save_optional_media(video, "video", ALLOWED_VIDEO_TYPES, MAX_VIDEO_SIZE_MB)
@@ -135,7 +141,7 @@ async def report_incident(
         description=description,
         severity_level=severity.severity_level,
         flood_coverage_pct=severity.flood_coverage_pct,
-        confidence=severity.confidence,
+        confidence=severity.severity_score,
         audio_path=audio_path,
         video_path=video_path,
     )
@@ -143,7 +149,7 @@ async def report_incident(
     db.commit()
     db.refresh(db_incident)
 
-    return _to_incident_out(db_incident, severity)
+    return _to_incident_out(db_incident, severity, ai_assessment)
 
 
 @router.get("/", response_model=list[IncidentOut])
@@ -172,8 +178,23 @@ def list_incidents(
             SeverityResult(
                 severity_level=r.severity_level,
                 flood_coverage_pct=r.flood_coverage_pct,
-                confidence=r.confidence,
+                severity_score=r.confidence,
             ),
         )
         for r in rows
     ]
+
+
+class ChatRequest(BaseModel):
+    question: str
+    incident: dict
+
+
+@router.post("/chat")
+def chat(request: ChatRequest):
+    return {
+        "answer": chat_with_gemini(
+            request.question,
+            request.incident
+        )
+    }

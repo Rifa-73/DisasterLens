@@ -6,7 +6,16 @@ class SeverityResult(BaseModel):
     """What we return after running an uploaded image through the CV model."""
     severity_level: str          # e.g. "low", "moderate", "severe"
     flood_coverage_pct: float    # % of image classified as flooded, from U-Net mask
-    confidence: float
+    severity_score: float
+
+
+class GeminiAssessment(BaseModel):
+
+    disaster_type: str
+    likelihood: str
+    priority: str
+    reason: str
+    needs_human_verification: bool
 
 
 class IncidentCreate(BaseModel):
@@ -27,4 +36,5 @@ class IncidentOut(BaseModel):
     severity: SeverityResult
     # URLs the frontend can use to play back the uploaded audio/video, if any.
     audio_url: Optional[str] = None
-    video_url: Optional[str] = None 
+    video_url: Optional[str] = None
+    ai_assessment: Optional[GeminiAssessment] = None
