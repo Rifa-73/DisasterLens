@@ -25,3 +25,6 @@ class IncidentOut(BaseModel):
     longitude: float
     description: Optional[str] = None
     severity: SeverityResult
+    # URLs the frontend can use to play back the uploaded audio/video, if any.
+    audio_url: Optional[str] = None
+    video_url: Optional[str] = None 
