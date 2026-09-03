@@ -1,4 +1,5 @@
 """
+============================================================
 predict.py
 ============================================================
 Inference module for the FloodNet U-Net segmentation model.
@@ -42,6 +43,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
+
 # ------------------------------------------------------------
 # PROJECT ROOT (matches train.py's setup)
 # ------------------------------------------------------------
@@ -57,6 +59,8 @@ from models.cvdl_model import FloodNetUNet
 # ============================================================
 
 NUM_CLASSES = 10
+
+# CHANGED: match the latest training/prediction resolution
 IMAGE_SIZE = (512, 512)
 
 CLASS_NAMES = [
@@ -72,15 +76,16 @@ CLASS_NAMES = [
     "Grass",
 ]
 
+
 # Classes that indicate actual flood damage (used for severity scoring).
 # Weight = how much that class contributes to the severity score.
 # Tune these based on how "bad" each class is for disaster response.
 SEVERITY_WEIGHTS = {
     "Building-Flooded": 3.0,
     "Road-Flooded": 2.0,
-    "Water": 1.0,       # standing water outside expected areas
-    "Vehicle": 0.5,      # stranded vehicles, minor signal
-    "Pool": 0.3,         # usually not disaster-relevant, low weight
+    "Water": 1.0,
+    "Vehicle": 0.5,
+    "Pool": 0.3,
 }
 
 
@@ -121,9 +126,11 @@ class FloodPredictor:
             transforms.ToTensor()
         ])
 
+
     # --------------------------------------------------------
     # Load an image from a file path, bytes, or a PIL Image
     # --------------------------------------------------------
+
     def _load_image(self, image_input):
 
         if isinstance(image_input, Image.Image):
@@ -142,9 +149,11 @@ class FloodPredictor:
 
         return image
 
+
     # --------------------------------------------------------
     # Run the model and return a raw class-id mask (H, W)
     # --------------------------------------------------------
+
     def predict_mask(self, image_input):
 
         image = self._load_image(image_input)
@@ -160,9 +169,11 @@ class FloodPredictor:
 
         return mask, original_size
 
+
     # --------------------------------------------------------
     # Full prediction: mask + per-class stats + severity score
     # --------------------------------------------------------
+
     def predict(self, image_input, resize_mask_to_original=False):
 
         mask, original_size = self.predict_mask(image_input)
@@ -173,8 +184,11 @@ class FloodPredictor:
         class_percentages = {}
 
         for class_id, class_name in enumerate(CLASS_NAMES):
+
             count = int((mask == class_id).sum())
+
             class_pixel_counts[class_name] = count
+
             class_percentages[class_name] = round(
                 100.0 * count / total_pixels, 2
             )
@@ -182,9 +196,9 @@ class FloodPredictor:
         severity_score = self._compute_severity(class_percentages)
 
         result = {
-            "mask": mask,  # numpy array (H, W), class id per pixel
+            "mask": mask,
             "mask_shape": mask.shape,
-            "original_size": original_size,  # (W, H) of input image
+            "original_size": original_size,
             "class_pixel_counts": class_pixel_counts,
             "class_percentages": class_percentages,
             "severity_score": severity_score,
@@ -192,45 +206,63 @@ class FloodPredictor:
         }
 
         if resize_mask_to_original:
+
             mask_img = Image.fromarray(mask).resize(
-                original_size, resample=Image.NEAREST
+                original_size,
+                resample=Image.NEAREST
             )
+
             result["mask_original_size"] = np.array(mask_img)
 
         return result
+
 
     # --------------------------------------------------------
     # Severity scoring: weighted sum of flood-relevant class %s,
     # normalized to a 0-100 scale.
     # --------------------------------------------------------
+
     def _compute_severity(self, class_percentages):
 
         raw_score = 0.0
 
         for class_name, weight in SEVERITY_WEIGHTS.items():
-            raw_score += weight * class_percentages.get(class_name, 0.0)
 
-        # Normalize against the max possible raw score (all severity
-        # weight classes at 100%) so the result is roughly 0-100.
+            raw_score += weight * class_percentages.get(
+                class_name,
+                0.0
+            )
+
+        # Normalize against the max possible raw score
+        # (all severity weight classes at 100%) so the result
+        # is roughly 0-100.
+
         max_possible = sum(SEVERITY_WEIGHTS.values()) * 100.0
+
         normalized = (raw_score / max_possible) * 100.0
 
         return round(min(normalized, 100.0), 2)
+
 
     def _severity_label(self, score):
 
         if score >= 50:
             return "High"
+
         elif score >= 20:
             return "Medium"
+
         elif score > 0:
             return "Low"
+
         else:
             return "None"
+
 
     # --------------------------------------------------------
     # Save a color-coded visualization of the mask to disk
     # --------------------------------------------------------
+
     def save_visualization(self, mask, output_path):
 
         # Simple fixed color palette, one color per class
@@ -248,6 +280,7 @@ class FloodPredictor:
         ], dtype=np.uint8)
 
         color_mask = palette[mask]
+
         Image.fromarray(color_mask).save(output_path)
 
 
@@ -258,7 +291,9 @@ class FloodPredictor:
 if __name__ == "__main__":
 
     if len(sys.argv) < 2:
+
         print("Usage: python predict.py <image_path> [model_path]")
+
         sys.exit(1)
 
     image_path = sys.argv[1]
@@ -266,7 +301,9 @@ if __name__ == "__main__":
     model_path = (
         sys.argv[2]
         if len(sys.argv) > 2
-        else str(PROJECT_ROOT / "outputs" / "best_model_ce_dice.pth")
+        else str(
+            PROJECT_ROOT / "outputs" / "best_model_ce_dice.pth"
+        )
     )
 
     predictor = FloodPredictor(model_path)
