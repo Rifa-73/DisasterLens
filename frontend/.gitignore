@@ -16,6 +16,9 @@ dist-ssr
 
 # Local files
 *.local
+.env
+.env.*
+!.env.example
 
 # Python virtual environment
 cvdl/.venv/
@@ -30,5 +33,3 @@ cvdl/.venv/
 *.njsproj
 *.sln
 *.sw?
-
-
