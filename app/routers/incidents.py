@@ -1,5 +1,9 @@
 from typing import Optional
 
+from pydantic import BaseModel
+from app.services.gemini_service import chat_with_gemini
+from app.services.gemini_service import analyze_image
+
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, Query
 from sqlalchemy.orm import Session
 
@@ -62,24 +66,27 @@ async def report_incident(
 
     severity = assess_flood_severity(image_bytes)
 
+    ai_assessment = analyze_image(image_bytes, description or "")
+
     db_incident = Incident(
         latitude=latitude,
         longitude=longitude,
         description=description,
         severity_level=severity.severity_level,
         flood_coverage_pct=severity.flood_coverage_pct,
-        confidence=severity.confidence,
+        confidence=severity.severity_score,
     )
     db.add(db_incident)
     db.commit()
     db.refresh(db_incident)
 
     return IncidentOut(
-        id=db_incident.id,
-        latitude=db_incident.latitude,
-        longitude=db_incident.longitude,
-        description=db_incident.description,
-        severity=severity,
+    id=db_incident.id,
+    latitude=db_incident.latitude,
+    longitude=db_incident.longitude,
+    description=db_incident.description,
+    severity=severity,
+    ai_assessment=ai_assessment,
     )
 
 
@@ -112,8 +119,24 @@ def list_incidents(
             severity=SeverityResult(
                 severity_level=r.severity_level,
                 flood_coverage_pct=r.flood_coverage_pct,
-                confidence=r.confidence,
+                severity_score=r.confidence,
             ),
         )
         for r in rows
     ]
+
+
+
+class ChatRequest(BaseModel):
+    question: str
+    incident: dict
+
+
+@router.post("/chat")
+def chat(request: ChatRequest):
+    return {
+        "answer": chat_with_gemini(
+            request.question,
+            request.incident
+        )
+    }

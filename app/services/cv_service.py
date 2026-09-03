@@ -49,5 +49,5 @@ def assess_flood_severity(image_bytes: bytes) -> SeverityResult:
     return SeverityResult(
         severity_level=_SEVERITY_MAP.get(result["severity_label"], "low"),
         flood_coverage_pct=flood_coverage_pct,
-        confidence=round(result["severity_score"] / 100, 2),
+        severity_score=result["severity_score"],
     )

@@ -7,3 +7,4 @@ torch
 torchvision 
 pillow 
 numpy 
+google-genai
