@@ -34,6 +34,7 @@ function ResponderChatbot({ report }) {
             ai_assessment: report?.aiAssessment,
             cvdl: report?.cvAssessment,
             location: report?.location,
+            evidence: report?.evidence, 
           },
         }),
       });

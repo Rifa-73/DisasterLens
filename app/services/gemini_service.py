@@ -56,18 +56,28 @@ Do not claim the disaster is officially confirmed.
         return response.parsed
 
     except errors.ClientError as e:
-        if e.code == 429:
-            return {
-                "disaster_type": "Flood",
-                "likelihood": "Needs assessment",
-                "priority": "Review required",
-                "reason": "Gemini analysis is temporarily unavailable. CVDL analysis is available for this incident.",
-                "needs_human_verification": True,
-            }
+        print("GEMINI ERROR:", e)
         raise
 
 
 def chat_with_gemini(question: str, incident: dict):
+    q = question.lower()
+
+    if "evidence" in q or "submitted" in q:
+        evidence = incident.get("evidence") or {}
+        items = []
+
+        if evidence.get("image"):
+            items.append("image")
+        if evidence.get("video"):
+            items.append("video")
+        if evidence.get("audio"):
+            items.append("audio")
+
+        return "Evidence submitted: " + (
+            ", ".join(items) if items else "No evidence information available."
+        )
+
     try:
         prompt = f"""
 Answer the responder's question using only this incident data:
@@ -91,6 +101,21 @@ def fallback_answer(question: str, incident: dict):
     q = question.lower()
     ai = incident.get("ai_assessment") or {}
     cv = incident.get("cvdl") or {}
+
+    if "evidence" in q or "submitted" in q:
+        evidence = incident.get("evidence") or {}
+        items = []
+
+        if evidence.get("image"):
+            items.append("image")
+        if evidence.get("video"):
+            items.append("video")
+        if evidence.get("audio"):
+            items.append("audio")
+
+        return "Evidence submitted: " + (
+            ", ".join(items) if items else "No evidence information available."
+        )
 
     if "severity" in q or "flood" in q or "cvdl" in q:
         return (

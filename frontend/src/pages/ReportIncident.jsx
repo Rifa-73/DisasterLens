@@ -10,7 +10,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useState, useRef } from "react";
 
 function ReportIncident() {
   const navigate = useNavigate();
@@ -20,6 +20,8 @@ function ReportIncident() {
   const [video, setVideo] = useState(null);
   const [audio, setAudio] = useState(null);
   const [description, setDescription] = useState("");
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(null);
 
@@ -40,6 +42,34 @@ function ReportIncident() {
       () => setLocation("Please allow location access in your browser.")
     );
   };
+
+
+  const toggleSpeech = () => {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      
+      if (!SR) return alert("Speech recognition is not supported.");
+      
+      if (listening) {
+        recognitionRef.current?.stop();
+        return;
+      }
+    
+      const recognition = new SR();
+      recognition.lang = "en-IN";
+      recognition.continuous = false;
+    
+      recognition.onresult = (e) => {
+        const text = e.results[0][0].transcript;
+        setDescription((prev) => (prev ? `${prev} ${text}` : text));
+      };
+    
+      recognition.onend = () => setListening(false);
+      recognition.onerror = () => setListening(false);
+    
+      recognitionRef.current = recognition;
+      recognition.start();
+      setListening(true);
+    };
 
   const handleSubmit = async () => {
     if (!images.length || !location || !location.includes(",")) {
@@ -84,8 +114,8 @@ function ReportIncident() {
             evidence: {
               image: reader.result,
               imageName: images[0].name,
-              video: video?.name || null,
-              audio: audio?.name || null,
+              video: result.video_url || null,
+              audio: result.audio_url || null,
             },
             status: "AWAITING_VERIFICATION",
             aiAssessment: result.ai_assessment,
@@ -301,10 +331,21 @@ function ReportIncident() {
 
         {/* DESCRIPTION */}
         <div className="mt-10">
-          <label className="text-sm font-semibold">
-            Describe what you observed
-          </label>
-
+          <div className="flex justify-between items-center">
+            <label className="text-sm font-semibold">
+              Describe what you observed
+            </label>
+                
+            <button
+              type="button"
+              onClick={toggleSpeech}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#EAF3EC] text-[#2F7D4A] text-xs font-semibold"
+            >
+              <Mic className="w-4 h-4" />
+              {listening ? "Listening..." : "Speak"}
+            </button>
+          </div>
+                
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}

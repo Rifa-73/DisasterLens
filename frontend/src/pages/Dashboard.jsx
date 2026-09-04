@@ -25,10 +25,46 @@ import { useNavigate } from "react-router-dom";
 function Dashboard() {
   const navigate = useNavigate();
   const [report, setReport] = useState(null);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [lastSeenId, setLastSeenId] = useState(
+    Number(localStorage.getItem("lastSeenIncidentId") || 0)
+  );
 
   useEffect(() => {
-    const saved = localStorage.getItem("rnrReport");
-    if (saved) setReport(JSON.parse(saved));
+    const fetchIncidents = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/incidents/");
+        const data = await res.json();
+
+        console.log("Incidents from backend:", data);
+
+        if (!data.length) return;
+
+        const latest = data.reduce((a, b) =>
+          Number(a.id) > Number(b.id) ? a : b
+        );
+
+        setReport({
+          id: latest.id,
+          location: `${latest.latitude}, ${latest.longitude}`,
+          description: latest.description,
+          aiAssessment: latest.ai_assessment,
+          cvAssessment: latest.severity,
+          evidence: {
+            video: latest.video_url,
+            audio: latest.audio_url,
+          },
+        });
+      } catch (error) {
+        console.error("Failed to fetch incidents:", error);
+      }
+    };
+
+
+    fetchIncidents();
+    const interval = setInterval(fetchIncidents, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const location = report?.location
@@ -120,7 +156,40 @@ function Dashboard() {
                   Latest report requiring attention
                 </p>
               </div>
-              <Bell className="w-5 h-5 text-gray-500" />
+                  <div className="relative">
+                    <button onClick={() => {
+                        setNotificationOpen(!notificationOpen);
+
+                        if (report) {
+                          localStorage.setItem("lastSeenIncidentId", report.id);
+                          setLastSeenId(report.id);
+                        }
+                      }}>
+
+                      <Bell className="w-5 h-5 text-gray-500" />
+                     {report && report.id > lastSeenId && (
+                        <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-red-500 border-2 border-[#EAF4EC]" />
+                      )}
+                    </button>
+
+
+                    {notificationOpen && report && (
+                      <div className="absolute right-0 top-12 z-50 w-72 p-4 bg-white border border-[#DDE5DE] rounded-2xl shadow-xl">
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 rounded-xl bg-[#FDECEC]">
+                            <AlertTriangle className="w-5 h-5 text-red-500" />
+                          </div>
+                                        
+                          <div>
+                            <p className="font-semibold text-sm">New Incident</p>
+                            <p className="text-xs text-[#68736B] mt-1">
+                              A new disaster report has been submitted.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
             </div>
 
             <div className="p-5 rounded-2xl border border-red-200 bg-white shadow-sm">

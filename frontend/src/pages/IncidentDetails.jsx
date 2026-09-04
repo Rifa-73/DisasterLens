@@ -220,14 +220,14 @@ function IncidentDetails() {
             {report.evidence?.video && (
               <div className="p-5 rounded-2xl bg-white border border-[#DDE5DE]">
                 <Video className="w-6 h-6 text-[#2F7D4A]" />
-
-                <p className="font-semibold mt-4">
-                  Video
-                </p>
-
-                <p className="text-xs text-[#68736B] mt-1 break-all">
-                  {report.evidence.video}
-                </p>
+                        
+                <p className="font-semibold mt-4">Video Evidence</p>
+                        
+                <video
+                  src={`http://127.0.0.1:8000${report.evidence.video}`}
+                  controls
+                  className="w-full mt-3 rounded-xl"
+                />
               </div>
             )}
 

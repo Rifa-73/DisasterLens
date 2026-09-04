@@ -193,6 +193,10 @@ class FloodPredictor:
                 100.0 * count / total_pixels, 2
             )
 
+        print("\nCLASS PERCENTAGES:")
+        for name, percentage in class_percentages.items():
+           print(f"{name}: {percentage}%")
+
         severity_score = self._compute_severity(class_percentages)
 
         result = {
@@ -224,24 +228,15 @@ class FloodPredictor:
 
     def _compute_severity(self, class_percentages):
 
-        raw_score = 0.0
+         raw_score = sum(
+             weight * class_percentages.get(class_name, 0.0)
+             for class_name, weight in SEVERITY_WEIGHTS.items()
+         )
 
-        for class_name, weight in SEVERITY_WEIGHTS.items():
+         max_weight = max(SEVERITY_WEIGHTS.values())
+         normalized = raw_score / max_weight
 
-            raw_score += weight * class_percentages.get(
-                class_name,
-                0.0
-            )
-
-        # Normalize against the max possible raw score
-        # (all severity weight classes at 100%) so the result
-        # is roughly 0-100.
-
-        max_possible = sum(SEVERITY_WEIGHTS.values()) * 100.0
-
-        normalized = (raw_score / max_possible) * 100.0
-
-        return round(min(normalized, 100.0), 2)
+         return round(min(normalized, 100.0), 2)
 
 
     def _severity_label(self, score):
