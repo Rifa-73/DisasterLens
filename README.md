@@ -15,6 +15,7 @@ AI-powered flood detection and severity assessment platform. Users report flood 
 **Computer Vision / Deep Learning:** PyTorch, custom U-Net architecture trained on the FloodNet dataset
 **Generative AI:** Google Gemini API
 **Frontend:** React, Vite
+**Mapping:** Leaflet + OpenStreetMap
 
 ## Project structure
 
@@ -31,8 +32,25 @@ DisasterLens/
 │   ├── models/cvdl_model.py    # U-Net architecture
 │   ├── src/predict_api.py       # inference class used by the backend
 │   └── outputs/                  # trained model weights + evaluation results
-├── frontend/                # React frontend
-└── requirements.txt
+│
+├── disaster-ai/                      # Disaster AI service
+│   ├── app.py                        # AI service entrypoint 
+│   ├── ai_model.py                   # AI model logic
+│   ├── services/                     # Gemini integration
+│   └── requirements.txt
+│
+├── frontend/                         # React + Vite 
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── App.jsx
+│   │   └── main.jsx
+│   ├── public/
+│   └── package.json
+│
+├── database.db                       # Local SQLite database
+├── requirements.txt                  # Backend dependencies
+└── README.md
 ```
 
 ## API endpoints
