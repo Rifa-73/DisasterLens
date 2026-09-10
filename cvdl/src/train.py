@@ -31,11 +31,13 @@ NUM_CLASSES = 10
 
 IMAGE_SIZE = (512, 512)
 
-NUM_EPOCHS = 20
+# Only 10 additional fine-tuning epochs
+NUM_EPOCHS = 10
 
 BATCH_SIZE = 4
 
-LEARNING_RATE = 1e-4
+# Fresh optimizer will actually use this LR
+LEARNING_RATE = 5e-5
 
 NUM_WORKERS = 0
 
@@ -71,7 +73,7 @@ OUTPUT_DIR.mkdir(
 
 
 # ============================================================
-# NEW MODEL NAME
+# MODEL NAME
 # ============================================================
 
 BEST_MODEL_PATH = OUTPUT_DIR / "best_model_weighted.pth"
@@ -198,30 +200,25 @@ print("Model created successfully.")
 # CLASS WEIGHTS
 # ============================================================
 
-# We are NOT giving Grass a high weight because
-# Grass prediction amount is already close to Ground Truth.
+# Stronger focus on actual flooded classes.
 #
-# We are increasing the importance of:
+# Road-Flooded gets the highest weight because it was
+# the weakest class in the previous evaluation.
 #
-# Building-Flooded
-# Road-Flooded
-# Vehicle
-# Pool
-#
-# Background is slightly reduced.
+# Building-Flooded and Water are also given strong weights.
 
 CLASS_WEIGHTS = torch.tensor(
     [
-        0.5,   # 0 Background
-        1.5,   # 1 Building-Flooded
-        1.2,   # 2 Building-Non-Flooded
-        1.5,   # 3 Road-Flooded
-        1.2,   # 4 Road-Non-Flooded
-        1.0,   # 5 Water
-        1.0,   # 6 Tree
-        2.0,   # 7 Vehicle
-        2.0,   # 8 Pool
-        1.0    # 9 Grass
+        0.35,  # 0 Background
+        2.50,  # 1 Building-Flooded
+        1.10,  # 2 Building-Non-Flooded
+        3.50,  # 3 Road-Flooded
+        1.10,  # 4 Road-Non-Flooded
+        1.50,  # 5 Water
+        1.00,  # 6 Tree
+        1.50,  # 7 Vehicle
+        0.75,  # 8 Pool
+        1.00   # 9 Grass
     ],
     dtype=torch.float32
 ).to(device)
@@ -248,7 +245,7 @@ ce_loss_function = torch.nn.CrossEntropyLoss(
 
 
 # ============================================================
-# DICE LOSS
+# FLOOD-FOCUSED DICE LOSS
 # ============================================================
 
 def dice_loss(
@@ -257,28 +254,11 @@ def dice_loss(
     num_classes
 ):
 
-    """
-    Multi-class Dice Loss.
-
-    probabilities:
-        [B, C, H, W]
-
-    masks:
-        [B, H, W]
-    """
-
-    # --------------------------------------------------------
-    # One-hot encode ground truth
-    # --------------------------------------------------------
-
     masks_one_hot = torch.nn.functional.one_hot(
-        masks,
+        masks.long(),
         num_classes=num_classes
     )
 
-    # [B, H, W, C]
-    # →
-    # [B, C, H, W]
 
     masks_one_hot = masks_one_hot.permute(
         0,
@@ -292,17 +272,41 @@ def dice_loss(
 
     dice_total = 0.0
 
+    weight_total = 0.0
 
-    # --------------------------------------------------------
-    # Calculate Dice for every class
-    # --------------------------------------------------------
+
+    # Stronger importance for flooded classes.
+
+    dice_weights = torch.tensor(
+        [
+            0.0,  # Background
+            2.5,  # Building-Flooded
+            1.0,  # Building-Non-Flooded
+            3.5,  # Road-Flooded
+            1.5,  # Road-Non-Flooded
+            1.8,  # Water
+            1.0,  # Tree
+            1.2,  # Vehicle
+            0.5,  # Pool
+            1.0   # Grass
+        ],
+        dtype=probabilities.dtype,
+        device=probabilities.device
+    )
+
 
     for class_id in range(num_classes):
+
+        if dice_weights[class_id].item() == 0:
+
+            continue
+
 
         predicted = probabilities[
             :,
             class_id
         ]
+
 
         actual = masks_one_hot[
             :,
@@ -334,11 +338,138 @@ def dice_loss(
 
 
         dice_total += (
-            1.0 - dice
+            dice_weights[class_id]
+            *
+            (1.0 - dice)
         )
 
 
-    return dice_total / num_classes
+        weight_total += dice_weights[class_id]
+
+
+    return dice_total / weight_total
+
+
+# ============================================================
+# TVERSKY LOSS
+# ============================================================
+
+def tversky_loss(
+    probabilities,
+    masks,
+    num_classes,
+    alpha=0.7,
+    beta=0.3
+):
+
+    masks_one_hot = torch.nn.functional.one_hot(
+        masks.long(),
+        num_classes=num_classes
+    )
+
+
+    masks_one_hot = masks_one_hot.permute(
+        0,
+        3,
+        1,
+        2
+    ).float()
+
+
+    smooth = 1e-6
+
+    total_loss = 0.0
+
+    total_weight = 0.0
+
+
+    # Road-Flooded receives strongest focus.
+    #
+    # alpha > beta means false negatives are penalized more.
+    #
+    # This is useful when the model is missing actual
+    # flooded-road pixels.
+
+    tversky_weights = torch.tensor(
+        [
+            0.0,  # Background
+            2.5,  # Building-Flooded
+            1.0,  # Building-Non-Flooded
+            4.0,  # Road-Flooded
+            1.0,  # Road-Non-Flooded
+            1.5,  # Water
+            1.0,  # Tree
+            1.2,  # Vehicle
+            0.5,  # Pool
+            1.0   # Grass
+        ],
+        dtype=probabilities.dtype,
+        device=probabilities.device
+    )
+
+
+    for class_id in range(num_classes):
+
+        if tversky_weights[class_id].item() == 0:
+
+            continue
+
+
+        predicted = probabilities[
+            :,
+            class_id
+        ]
+
+
+        actual = masks_one_hot[
+            :,
+            class_id
+        ]
+
+
+        true_positive = (
+            predicted * actual
+        ).sum()
+
+
+        false_negative = (
+            (1.0 - predicted) * actual
+        ).sum()
+
+
+        false_positive = (
+            predicted * (1.0 - actual)
+        ).sum()
+
+
+        tversky = (
+            true_positive
+            +
+            smooth
+        ) / (
+            true_positive
+            +
+            alpha * false_negative
+            +
+            beta * false_positive
+            +
+            smooth
+        )
+
+
+        total_loss += (
+            tversky_weights[class_id]
+            *
+            (1.0 - tversky)
+        )
+
+
+        total_weight += (
+            tversky_weights[class_id]
+        )
+
+
+    return total_loss / total_weight
 
 
 # ============================================================
@@ -361,7 +492,7 @@ def combined_loss(
 
 
     # --------------------------------------------------------
-    # Convert logits → probabilities
+    # Probabilities
     # --------------------------------------------------------
 
     probabilities = torch.softmax(
@@ -371,7 +502,7 @@ def combined_loss(
 
 
     # --------------------------------------------------------
-    # Dice
+    # Flood-focused Dice
     # --------------------------------------------------------
 
     dice = dice_loss(
@@ -382,19 +513,43 @@ def combined_loss(
 
 
     # --------------------------------------------------------
+    # Tversky
+    # --------------------------------------------------------
+
+    tversky = tversky_loss(
+        probabilities,
+        masks,
+        NUM_CLASSES
+    )
+
+
+    # --------------------------------------------------------
     # Combined
     # --------------------------------------------------------
 
-    return ce + dice
+    return (
+        0.40 * ce
+        +
+        0.25 * dice
+        +
+        0.35 * tversky
+    )
 
 
 # ============================================================
 # OPTIMIZER
 # ============================================================
 
+# IMPORTANT:
+# We intentionally create a FRESH optimizer.
+#
+# We do NOT load the old optimizer state.
+# Therefore LEARNING_RATE = 5e-5 will actually be used.
+
 optimizer = torch.optim.Adam(
     model.parameters(),
-    lr=LEARNING_RATE
+    lr=LEARNING_RATE,
+    weight_decay=1e-5
 )
 
 
@@ -406,8 +561,211 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer,
     mode="max",
     factor=0.5,
-    patience=3
+    patience=2
 )
+
+
+# ============================================================
+# RESUME MODEL WEIGHTS ONLY
+# ============================================================
+
+start_epoch = 0
+
+best_miou = -1.0
+
+best_flooded_miou = -1.0
+
+
+if BEST_MODEL_PATH.exists():
+
+    print("\n" + "=" * 70)
+    print("LOADING CURRENT BEST MODEL")
+    print("=" * 70)
+
+
+    checkpoint = torch.load(
+        BEST_MODEL_PATH,
+        map_location=device,
+        weights_only=False
+    )
+
+
+    if "model_state_dict" in checkpoint:
+
+        model.load_state_dict(
+            checkpoint["model_state_dict"]
+        )
+
+
+        start_epoch = int(
+            checkpoint.get(
+                "epoch",
+                0
+            )
+        )
+
+
+        best_miou = float(
+            checkpoint.get(
+                "best_miou",
+                -1.0
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # Get previous flooded mIoU from checkpoint
+        # ----------------------------------------------------
+
+        previous_class_iou = checkpoint.get(
+            "class_iou",
+            None
+        )
+
+
+        if previous_class_iou is not None:
+
+            try:
+
+                previous_flooded_values = [
+
+                    float(previous_class_iou[1]),
+                    float(previous_class_iou[3])
+
+                ]
+
+
+                previous_flooded_values = [
+
+                    value
+
+                    for value in previous_flooded_values
+
+                    if not np.isnan(value)
+
+                ]
+
+
+                if previous_flooded_values:
+
+                    best_flooded_miou = float(
+                        np.mean(
+                            previous_flooded_values
+                        )
+                    )
+
+            except Exception:
+
+                best_flooded_miou = -1.0
+
+
+    else:
+
+        model.load_state_dict(
+            checkpoint
+        )
+
+
+    print(
+        "Resumed model from epoch:",
+        start_epoch
+    )
+
+
+    print(
+        "Previous overall best mIoU:",
+        best_miou
+    )
+
+
+    print(
+        "Previous flooded mIoU:",
+        best_flooded_miou
+    )
+
+
+else:
+
+    print(
+        "\nNo existing checkpoint found."
+    )
+
+
+# ============================================================
+# DATA AUGMENTATION
+# ============================================================
+
+def augment_batch(
+    images,
+    masks
+):
+
+    # --------------------------------------------------------
+    # Horizontal flip
+    # --------------------------------------------------------
+
+    if torch.rand(1).item() < 0.5:
+
+        images = torch.flip(
+            images,
+            dims=[3]
+        )
+
+
+        masks = torch.flip(
+            masks,
+            dims=[2]
+        )
+
+
+    # --------------------------------------------------------
+    # Vertical flip
+    # --------------------------------------------------------
+
+    if torch.rand(1).item() < 0.5:
+
+        images = torch.flip(
+            images,
+            dims=[2]
+        )
+
+
+        masks = torch.flip(
+            masks,
+            dims=[1]
+        )
+
+
+    # --------------------------------------------------------
+    # 90-degree rotation
+    # --------------------------------------------------------
+
+    if torch.rand(1).item() < 0.5:
+
+        k = int(
+            torch.randint(
+                1,
+                4,
+                (1,)
+            ).item()
+        )
+
+
+        images = torch.rot90(
+            images,
+            k=k,
+            dims=[2, 3]
+        )
+
+
+        masks = torch.rot90(
+            masks,
+            k=k,
+            dims=[1, 2]
+        )
+
+
+    return images, masks
 
 
 # ============================================================
@@ -423,10 +781,6 @@ def validate():
 
     total_pixels = 0
 
-
-    # --------------------------------------------------------
-    # Confusion matrix
-    # --------------------------------------------------------
 
     confusion_matrix = np.zeros(
         (
@@ -446,17 +800,20 @@ def validate():
                 non_blocking=True
             )
 
+
             masks = masks.to(
                 device,
                 non_blocking=True
-            )
+            ).long()
 
 
             # ------------------------------------------------
             # Prediction
             # ------------------------------------------------
 
-            outputs = model(images)
+            outputs = model(
+                images
+            )
 
 
             predictions = torch.argmax(
@@ -474,46 +831,63 @@ def validate():
             ).sum().item()
 
 
-            total_pixels += masks.numel()
+            total_pixels += (
+                masks.numel()
+            )
 
 
             # ------------------------------------------------
             # Confusion matrix
             # ------------------------------------------------
 
-            true_pixels = masks.cpu().numpy().reshape(-1)
-
-            predicted_pixels = (
-                predictions
-                .cpu()
+            true_pixels = (
+                masks.cpu()
                 .numpy()
                 .reshape(-1)
             )
 
 
-            for true_class, predicted_class in zip(
-                true_pixels,
-                predicted_pixels
-            ):
+            predicted_pixels = (
+                predictions.cpu()
+                .numpy()
+                .reshape(-1)
+            )
 
-                if (
-                    0 <= true_class < NUM_CLASSES
-                    and
-                    0 <= predicted_class < NUM_CLASSES
-                ):
 
-                    confusion_matrix[
-                        true_class,
-                        predicted_class
-                    ] += 1
+            valid = (
+                (true_pixels >= 0)
+                &
+                (true_pixels < NUM_CLASSES)
+                &
+                (predicted_pixels >= 0)
+                &
+                (predicted_pixels < NUM_CLASSES)
+            )
+
+
+            confusion_matrix += np.bincount(
+                NUM_CLASSES * true_pixels[valid]
+                +
+                predicted_pixels[valid],
+                minlength=(
+                    NUM_CLASSES
+                    *
+                    NUM_CLASSES
+                )
+            ).reshape(
+                NUM_CLASSES,
+                NUM_CLASSES
+            )
 
 
     # ========================================================
-    # Pixel Accuracy
+    # PIXEL ACCURACY
     # ========================================================
 
     pixel_accuracy = (
-        total_correct / total_pixels
+        total_correct
+        /
+        max(total_pixels, 1)
     )
 
 
@@ -524,7 +898,9 @@ def validate():
     class_iou = []
 
 
-    for class_id in range(NUM_CLASSES):
+    for class_id in range(
+        NUM_CLASSES
+    ):
 
         true_positive = confusion_matrix[
             class_id,
@@ -574,30 +950,28 @@ def validate():
             )
 
 
-        class_iou.append(iou)
+        class_iou.append(
+            iou
+        )
 
 
     # ========================================================
-    # MEAN IoU
-    # ========================================================
-    #
-    # IMPORTANT:
-    # Background (class 0) is excluded.
-    #
-    # This matches your previous analysis where
-    # Background IoU was 0.0000.
-    #
+    # OVERALL MEAN IoU
     # ========================================================
 
     valid_ious = [
+
         class_iou[class_id]
+
         for class_id in range(
             1,
             NUM_CLASSES
         )
+
         if not np.isnan(
             class_iou[class_id]
         )
+
     ]
 
 
@@ -606,9 +980,44 @@ def validate():
     )
 
 
+    # ========================================================
+    # FLOODED CLASSES
+    # ========================================================
+
+    flooded_iou_values = [
+
+        class_iou[1],
+        class_iou[3]
+
+    ]
+
+
+    flooded_iou_values = [
+
+        value
+
+        for value in flooded_iou_values
+
+        if not np.isnan(value)
+
+    ]
+
+
+    if flooded_iou_values:
+
+        flooded_mean_iou = np.mean(
+            flooded_iou_values
+        )
+
+    else:
+
+        flooded_mean_iou = 0.0
+
+
     return (
         pixel_accuracy,
         mean_iou,
+        flooded_mean_iou,
         class_iou,
         confusion_matrix
     )
@@ -619,41 +1028,63 @@ def validate():
 # ============================================================
 
 print("\n" + "=" * 70)
-print("STARTING TRAINING")
-print("=" * 70)
-
-print(
-    f"Epochs      : {NUM_EPOCHS}"
-)
-
-print(
-    f"Batch size  : {BATCH_SIZE}"
-)
-
-print(
-    f"Image size  : {IMAGE_SIZE}"
-)
-
-print(
-    f"Learning rate: {LEARNING_RATE}"
-)
-
-print(
-    "Loss        : Weighted CE + Dice"
-)
-
+print("STARTING FLOOD-FOCUSED FINE-TUNING")
 print("=" * 70)
 
 
-best_miou = -1.0
+print(
+    f"Additional epochs : "
+    f"{NUM_EPOCHS}"
+)
+
+
+print(
+    f"Batch size        : "
+    f"{BATCH_SIZE}"
+)
+
+
+print(
+    f"Image size        : "
+    f"{IMAGE_SIZE}"
+)
+
+
+print(
+    f"Learning rate     : "
+    f"{LEARNING_RATE}"
+)
+
+
+print(
+    "Loss              : "
+    "Weighted CE + Flood Dice + Tversky"
+)
+
+
+print(
+    "Augmentation      : "
+    "Horizontal/Vertical Flip + 90° Rotation"
+)
+
+
+print(
+    "Checkpoint metric : "
+    "Flooded Classes mIoU"
+)
+
+
+print("=" * 70)
 
 
 # ============================================================
 # EPOCH LOOP
 # ============================================================
 
-for epoch in range(NUM_EPOCHS):
-
+for epoch in range(
+    start_epoch,
+    start_epoch + NUM_EPOCHS
+):
 
     # ========================================================
     # TRAIN MODE
@@ -665,12 +1096,15 @@ for epoch in range(NUM_EPOCHS):
     total_train_loss = 0.0
 
 
-    print("\n")
-    print("=" * 70)
+    print("\n" + "=" * 70)
+
 
     print(
-        f"Epoch {epoch + 1}/{NUM_EPOCHS}"
+        f"Epoch "
+        f"{epoch + 1}/"
+        f"{start_epoch + NUM_EPOCHS}"
     )
+
 
     print("=" * 70)
 
@@ -682,7 +1116,9 @@ for epoch in range(NUM_EPOCHS):
     for batch_idx, (
         images,
         masks
-    ) in enumerate(train_loader):
+    ) in enumerate(
+        train_loader
+    ):
 
 
         # ----------------------------------------------------
@@ -694,9 +1130,20 @@ for epoch in range(NUM_EPOCHS):
             non_blocking=True
         )
 
+
         masks = masks.to(
             device,
             non_blocking=True
+        ).long()
+
+
+        # ----------------------------------------------------
+        # Augmentation
+        # ----------------------------------------------------
+
+        images, masks = augment_batch(
+            images,
+            masks
         )
 
 
@@ -736,6 +1183,16 @@ for epoch in range(NUM_EPOCHS):
 
 
         # ----------------------------------------------------
+        # Gradient clipping
+        # ----------------------------------------------------
+
+        torch.nn.utils.clip_grad_norm_(
+            model.parameters(),
+            max_norm=1.0
+        )
+
+
+        # ----------------------------------------------------
         # Update weights
         # ----------------------------------------------------
 
@@ -752,7 +1209,7 @@ for epoch in range(NUM_EPOCHS):
 
 
         # ----------------------------------------------------
-        # Print every 100 batches
+        # Print progress
         # ----------------------------------------------------
 
         if (
@@ -761,8 +1218,8 @@ for epoch in range(NUM_EPOCHS):
 
             print(
                 f"Batch "
-                f"{batch_idx + 1}"
-                f"/{len(train_loader)} "
+                f"{batch_idx + 1}/"
+                f"{len(train_loader)} "
                 f"| Loss: "
                 f"{loss.item():.4f}"
             )
@@ -775,7 +1232,10 @@ for epoch in range(NUM_EPOCHS):
     average_train_loss = (
         total_train_loss
         /
-        len(train_loader)
+        max(
+            len(train_loader),
+            1
+        )
     )
 
 
@@ -786,6 +1246,7 @@ for epoch in range(NUM_EPOCHS):
     (
         pixel_accuracy,
         mean_iou,
+        flooded_mean_iou,
         class_iou,
         confusion_matrix
     ) = validate()
@@ -795,21 +1256,30 @@ for epoch in range(NUM_EPOCHS):
     # PRINT RESULTS
     # ========================================================
 
-    print("\n" + "-" * 70)
+    print(
+        "\n"
+        +
+        "-" * 70
+    )
+
 
     print(
-        f"Epoch {epoch + 1}/{NUM_EPOCHS}"
+        f"Epoch "
+        f"{epoch + 1}"
     )
+
 
     print(
         f"Train Loss     : "
         f"{average_train_loss:.4f}"
     )
 
+
     print(
         f"Pixel Accuracy : "
         f"{pixel_accuracy:.4f}"
     )
+
 
     print(
         f"Mean IoU       : "
@@ -817,13 +1287,25 @@ for epoch in range(NUM_EPOCHS):
     )
 
 
+    print(
+        f"Flooded mIoU   : "
+        f"{flooded_mean_iou:.4f}"
+    )
+
+
     # ========================================================
     # PER CLASS IoU
     # ========================================================
 
-    print("\nPer-class IoU:")
+    print(
+        "\nPer-class IoU:"
+    )
 
-    for class_id in range(NUM_CLASSES):
+
+    for class_id in range(
+        NUM_CLASSES
+    ):
+
 
         if np.isnan(
             class_iou[class_id]
@@ -839,10 +1321,47 @@ for epoch in range(NUM_EPOCHS):
 
 
         print(
-            f"Class {class_id} "
-            f"({CLASS_NAMES[class_id]:25s}) "
-            f": {iou_text}"
+            f"Class "
+            f"{class_id} "
+            f"("
+            f"{CLASS_NAMES[class_id]:25s}"
+            f") "
+            f": "
+            f"{iou_text}"
         )
+
+
+    # ========================================================
+    # FLOODED CLASS DETAILS
+    # ========================================================
+
+    print(
+        "\nFlood-focused results:"
+    )
+
+
+    print(
+        f"Building-Flooded : "
+        f"{class_iou[1]:.4f}"
+    )
+
+
+    print(
+        f"Road-Flooded     : "
+        f"{class_iou[3]:.4f}"
+    )
+
+
+    print(
+        f"Water            : "
+        f"{class_iou[5]:.4f}"
+    )
+
+
+    print(
+        f"Vehicle          : "
+        f"{class_iou[7]:.4f}"
+    )
 
 
     # ========================================================
@@ -850,11 +1369,12 @@ for epoch in range(NUM_EPOCHS):
     # ========================================================
 
     scheduler.step(
-        mean_iou
+        flooded_mean_iou
     )
 
 
     current_lr = optimizer.param_groups[0]["lr"]
+
 
     print(
         f"\nLearning Rate: "
@@ -863,10 +1383,12 @@ for epoch in range(NUM_EPOCHS):
 
 
     # ========================================================
-    # SAVE BEST MODEL
+    # SAVE BEST FLOODED MODEL
     # ========================================================
 
-    if mean_iou > best_miou:
+    if flooded_mean_iou > best_flooded_miou:
+
+        best_flooded_miou = flooded_mean_iou
 
         best_miou = mean_iou
 
@@ -885,6 +1407,9 @@ for epoch in range(NUM_EPOCHS):
             "best_miou":
                 best_miou,
 
+            "best_flooded_miou":
+                best_flooded_miou,
+
             "pixel_accuracy":
                 pixel_accuracy,
 
@@ -901,23 +1426,32 @@ for epoch in range(NUM_EPOCHS):
 
 
         print(
-            "\nBEST MODEL SAVED!"
+            "\nBEST FLOODED MODEL SAVED!"
         )
 
+
         print(
-            f"Best mIoU: "
+            f"Best flooded mIoU: "
+            f"{best_flooded_miou:.4f}"
+        )
+
+
+        print(
+            f"Overall mIoU: "
             f"{best_miou:.4f}"
         )
+
 
         print(
             f"Saved to: "
             f"{BEST_MODEL_PATH}"
         )
 
+
     else:
 
         print(
-            "\nNo improvement in mIoU."
+            "\nNo improvement in flooded mIoU."
         )
 
 
@@ -926,21 +1460,45 @@ for epoch in range(NUM_EPOCHS):
 # ============================================================
 
 print("\n")
-print("=" * 70)
-print("TRAINING COMPLETE")
-print("=" * 70)
+
 
 print(
-    f"Best Validation mIoU: "
+    "=" * 70
+)
+
+
+print(
+    "FLOOD-FOCUSED TRAINING COMPLETE"
+)
+
+
+print(
+    "=" * 70
+)
+
+
+print(
+    f"Best Flooded mIoU: "
+    f"{best_flooded_miou:.4f}"
+)
+
+
+print(
+    f"Best Overall mIoU: "
     f"{best_miou:.4f}"
 )
 
+
 print(
-    f"Best model:"
+    "Best model:"
 )
+
 
 print(
     BEST_MODEL_PATH
 )
 
-print("=" * 70)
+
+print(
+    "=" * 70
+)

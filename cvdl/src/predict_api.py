@@ -2,34 +2,15 @@
 ============================================================
 predict.py
 ============================================================
+
 Inference module for the FloodNet U-Net segmentation model.
 
 This is meant to be imported directly by the backend (FastAPI)
 so it can turn an uploaded image into:
-  1. A segmentation mask (numpy array, one class id per pixel)
-  2. Per-class area percentages
-  3. A single "severity score" summarizing flood damage
 
-Usage as a library:
-------------------------------------------------------------
-    from predict import FloodPredictor
-
-    predictor = FloodPredictor("outputs/best_model_ce_dice.pth")
-
-    # From a file path
-    result = predictor.predict("some_image.jpg")
-
-    # From raw bytes (e.g. an uploaded file in FastAPI)
-    with open("some_image.jpg", "rb") as f:
-        image_bytes = f.read()
-    result = predictor.predict(image_bytes)
-
-    print(result["severity_score"])
-    print(result["class_percentages"])
-
-Usage from the command line (for quick testing):
-------------------------------------------------------------
-    python predict.py path/to/image.jpg
+1. A segmentation mask
+2. Per-class area percentages
+3. A single severity score
 ============================================================
 """
 
@@ -44,24 +25,26 @@ from PIL import Image
 from torchvision import transforms
 
 
-# ------------------------------------------------------------
-# PROJECT ROOT (matches train.py's setup)
-# ------------------------------------------------------------
+# ============================================================
+# PROJECT ROOT
+# ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from models.cvdl_model import FloodNetUNet
 
 
 # ============================================================
-# CONFIG — must match training config
+# CONFIG
 # ============================================================
 
 NUM_CLASSES = 10
 
-# CHANGED: match the latest training/prediction resolution
+# Match the latest training resolution
 IMAGE_SIZE = (512, 512)
+
 
 CLASS_NAMES = [
     "Background",
@@ -77,15 +60,35 @@ CLASS_NAMES = [
 ]
 
 
-# Classes that indicate actual flood damage (used for severity scoring).
-# Weight = how much that class contributes to the severity score.
-# Tune these based on how "bad" each class is for disaster response.
+# ============================================================
+# SEVERITY WEIGHTS
+# ============================================================
+
 SEVERITY_WEIGHTS = {
     "Building-Flooded": 3.0,
     "Road-Flooded": 2.0,
     "Water": 1.0,
     "Vehicle": 0.5,
     "Pool": 0.3,
+}
+
+
+# ============================================================
+# FLOOD-AWARE PREDICTION
+# ============================================================
+
+# Small inference-time preference for flood-related classes.
+#
+# This does NOT retrain or modify the model.
+# It only adjusts the logits slightly before argmax.
+#
+# Road-Flooded gets the strongest adjustment because it was
+# the weakest flooded class during validation.
+
+FLOOD_LOGIT_BIAS = {
+    1: 0.10,   # Building-Flooded
+    3: 0.18,   # Road-Flooded
+    5: 0.05,   # Water
 }
 
 
@@ -99,224 +102,565 @@ class FloodPredictor:
 
         self.model_path = Path(model_path)
 
+
+        # ----------------------------------------------------
+        # Select device
+        # ----------------------------------------------------
+
         if device is not None:
+
             self.device = device
+
         elif torch.backends.mps.is_available():
+
             self.device = torch.device("mps")
+
         elif torch.cuda.is_available():
+
             self.device = torch.device("cuda")
+
         else:
+
             self.device = torch.device("cpu")
 
-        self.model = FloodNetUNet(num_classes=NUM_CLASSES)
 
-        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
+        # ----------------------------------------------------
+        # Create model
+        # ----------------------------------------------------
 
-        # Support both raw state_dict and full checkpoint dict formats
+        self.model = FloodNetUNet(
+            num_classes=NUM_CLASSES
+        )
+
+
+        # ----------------------------------------------------
+        # Load checkpoint
+        # ----------------------------------------------------
+
+        checkpoint = torch.load(
+            self.model_path,
+            map_location=self.device,
+            weights_only=False
+        )
+
+
+        # ----------------------------------------------------
+        # Support full checkpoint
+        # ----------------------------------------------------
+
         if "model_state_dict" in checkpoint:
-            self.model.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            self.model.load_state_dict(checkpoint)
 
-        self.model.to(self.device)
+            self.model.load_state_dict(
+                checkpoint["model_state_dict"]
+            )
+
+        else:
+
+            self.model.load_state_dict(
+                checkpoint
+            )
+
+
+        # ----------------------------------------------------
+        # Move model to device
+        # ----------------------------------------------------
+
+        self.model.to(
+            self.device
+        )
+
         self.model.eval()
 
+
+        # ----------------------------------------------------
+        # Image transformation
+        # ----------------------------------------------------
+
         self.transform = transforms.Compose([
-            transforms.Resize(IMAGE_SIZE),
+
+            transforms.Resize(
+                IMAGE_SIZE
+            ),
+
             transforms.ToTensor()
+
         ])
 
 
-    # --------------------------------------------------------
-    # Load an image from a file path, bytes, or a PIL Image
-    # --------------------------------------------------------
+    # ========================================================
+    # LOAD IMAGE
+    # ========================================================
 
     def _load_image(self, image_input):
 
-        if isinstance(image_input, Image.Image):
-            image = image_input.convert("RGB")
+        if isinstance(
+            image_input,
+            Image.Image
+        ):
 
-        elif isinstance(image_input, (bytes, bytearray)):
-            image = Image.open(io.BytesIO(image_input)).convert("RGB")
+            image = image_input.convert(
+                "RGB"
+            )
 
-        elif isinstance(image_input, (str, Path)):
-            image = Image.open(image_input).convert("RGB")
+
+        elif isinstance(
+            image_input,
+            (bytes, bytearray)
+        ):
+
+            image = Image.open(
+                io.BytesIO(image_input)
+            ).convert(
+                "RGB"
+            )
+
+
+        elif isinstance(
+            image_input,
+            (str, Path)
+        ):
+
+            image = Image.open(
+                image_input
+            ).convert(
+                "RGB"
+            )
+
 
         else:
+
             raise TypeError(
-                "image_input must be a file path, bytes, or PIL.Image"
+                "image_input must be a file path, "
+                "bytes, or PIL.Image"
             )
+
 
         return image
 
 
-    # --------------------------------------------------------
-    # Run the model and return a raw class-id mask (H, W)
-    # --------------------------------------------------------
+    # ========================================================
+    # FLOOD-AWARE PREDICTION
+    # ========================================================
 
     def predict_mask(self, image_input):
 
-        image = self._load_image(image_input)
-        original_size = image.size  # (W, H)
+        image = self._load_image(
+            image_input
+        )
 
-        tensor = self.transform(image).unsqueeze(0).to(self.device)
+
+        original_size = image.size
+
+
+        # ----------------------------------------------------
+        # Convert image to tensor
+        # ----------------------------------------------------
+
+        tensor = self.transform(
+            image
+        ).unsqueeze(
+            0
+        ).to(
+            self.device
+        )
+
+
+        # ----------------------------------------------------
+        # Model inference
+        # ----------------------------------------------------
 
         with torch.no_grad():
-            outputs = self.model(tensor)
-            mask = torch.argmax(outputs, dim=1).squeeze(0)
 
-        mask = mask.cpu().numpy().astype(np.uint8)
+            outputs = self.model(
+                tensor
+            )
+
+
+            # ------------------------------------------------
+            # Make a copy so original model output is not
+            # modified.
+            # ------------------------------------------------
+
+            adjusted_outputs = outputs.clone()
+
+
+            # ------------------------------------------------
+            # Apply small flood-aware bias
+            # ------------------------------------------------
+
+            for class_id, bias in FLOOD_LOGIT_BIAS.items():
+
+                adjusted_outputs[
+                    :,
+                    class_id,
+                    :,
+                    :
+                ] += bias
+
+
+            # ------------------------------------------------
+            # Final class prediction
+            # ------------------------------------------------
+
+            mask = torch.argmax(
+                adjusted_outputs,
+                dim=1
+            ).squeeze(0)
+
+
+        # ----------------------------------------------------
+        # Convert to numpy
+        # ----------------------------------------------------
+
+        mask = mask.cpu().numpy().astype(
+            np.uint8
+        )
+
 
         return mask, original_size
 
 
-    # --------------------------------------------------------
-    # Full prediction: mask + per-class stats + severity score
-    # --------------------------------------------------------
+    # ========================================================
+    # FULL PREDICTION
+    # ========================================================
 
-    def predict(self, image_input, resize_mask_to_original=False):
+    def predict(
+        self,
+        image_input,
+        resize_mask_to_original=False
+    ):
 
-        mask, original_size = self.predict_mask(image_input)
+        mask, original_size = self.predict_mask(
+            image_input
+        )
+
 
         total_pixels = mask.size
 
+
         class_pixel_counts = {}
+
         class_percentages = {}
 
-        for class_id, class_name in enumerate(CLASS_NAMES):
 
-            count = int((mask == class_id).sum())
+        # ----------------------------------------------------
+        # Calculate class statistics
+        # ----------------------------------------------------
 
-            class_pixel_counts[class_name] = count
+        for class_id, class_name in enumerate(
+            CLASS_NAMES
+        ):
 
-            class_percentages[class_name] = round(
-                100.0 * count / total_pixels, 2
+            count = int(
+                (mask == class_id).sum()
             )
 
-        print("\nCLASS PERCENTAGES:")
-        for name, percentage in class_percentages.items():
-           print(f"{name}: {percentage}%")
 
-        severity_score = self._compute_severity(class_percentages)
+            class_pixel_counts[
+                class_name
+            ] = count
+
+
+            class_percentages[
+                class_name
+            ] = round(
+                100.0 * count / total_pixels,
+                2
+            )
+
+
+        # ----------------------------------------------------
+        # Calculate severity
+        # ----------------------------------------------------
+
+        severity_score = self._compute_severity(
+            class_percentages
+        )
+
+
+        # ----------------------------------------------------
+        # Create result
+        # ----------------------------------------------------
 
         result = {
-            "mask": mask,
-            "mask_shape": mask.shape,
-            "original_size": original_size,
-            "class_pixel_counts": class_pixel_counts,
-            "class_percentages": class_percentages,
-            "severity_score": severity_score,
-            "severity_label": self._severity_label(severity_score),
+
+            "mask":
+                mask,
+
+            "mask_shape":
+                mask.shape,
+
+            "original_size":
+                original_size,
+
+            "class_pixel_counts":
+                class_pixel_counts,
+
+            "class_percentages":
+                class_percentages,
+
+            "severity_score":
+                severity_score,
+
+            "severity_label":
+                self._severity_label(
+                    severity_score
+                ),
+
         }
+
+
+        # ----------------------------------------------------
+        # Optional original-size mask
+        # ----------------------------------------------------
 
         if resize_mask_to_original:
 
-            mask_img = Image.fromarray(mask).resize(
+            mask_img = Image.fromarray(
+                mask
+            ).resize(
                 original_size,
                 resample=Image.NEAREST
             )
 
-            result["mask_original_size"] = np.array(mask_img)
+
+            result[
+                "mask_original_size"
+            ] = np.array(
+                mask_img
+            )
+
 
         return result
 
 
-    # --------------------------------------------------------
-    # Severity scoring: weighted sum of flood-relevant class %s,
-    # normalized to a 0-100 scale.
-    # --------------------------------------------------------
+    # ========================================================
+    # SEVERITY SCORE
+    # ========================================================
 
-    def _compute_severity(self, class_percentages):
+    def _compute_severity(
+        self,
+        class_percentages
+    ):
 
-         raw_score = sum(
-             weight * class_percentages.get(class_name, 0.0)
-             for class_name, weight in SEVERITY_WEIGHTS.items()
-         )
+        # ----------------------------------------------------
+        # Actual flood coverage
+        #
+        # Building-Flooded + Road-Flooded + Water
+        # ----------------------------------------------------
 
-         max_weight = max(SEVERITY_WEIGHTS.values())
-         normalized = raw_score / max_weight
+        flood_coverage = (
 
-         return round(min(normalized, 100.0), 2)
+            class_percentages.get(
+                "Building-Flooded",
+                0.0
+            )
+
+            +
+
+            class_percentages.get(
+                "Road-Flooded",
+                0.0
+            )
+
+            +
+
+            class_percentages.get(
+                "Water",
+                0.0
+            )
+
+        )
 
 
-    def _severity_label(self, score):
+        # ----------------------------------------------------
+        # Keep score between 0 and 100
+        # ----------------------------------------------------
 
-        if score >= 50:
+        flood_coverage = min(
+            flood_coverage,
+            100.0
+        )
+
+
+        return round(
+            flood_coverage,
+            2
+        )
+
+
+    # ========================================================
+    # SEVERITY LABEL
+    # ========================================================
+
+    def _severity_label(
+        self,
+        score
+    ):
+
+        # 30% or more flood coverage
+        # = High severity
+
+        if score >= 30:
+
             return "High"
 
-        elif score >= 20:
+
+        # 10% - 29.99%
+        # = Medium severity
+
+        elif score >= 10:
+
             return "Medium"
 
+
+        # More than 0%
+        # = Low severity
+
         elif score > 0:
+
             return "Low"
 
+
         else:
+
             return "None"
 
 
-    # --------------------------------------------------------
-    # Save a color-coded visualization of the mask to disk
-    # --------------------------------------------------------
+    # ========================================================
+    # SAVE VISUALIZATION
+    # ========================================================
 
-    def save_visualization(self, mask, output_path):
+    def save_visualization(
+        self,
+        mask,
+        output_path
+    ):
 
-        # Simple fixed color palette, one color per class
+        # ----------------------------------------------------
+        # Fixed color palette
+        # ----------------------------------------------------
+
         palette = np.array([
-            [0, 0, 0],        # Background
-            [255, 0, 0],      # Building-Flooded
-            [180, 0, 0],      # Building-Non-Flooded
-            [0, 0, 255],      # Road-Flooded
-            [0, 0, 150],      # Road-Non-Flooded
-            [0, 255, 255],    # Water
-            [0, 128, 0],      # Tree
-            [255, 255, 0],    # Vehicle
-            [0, 255, 0],      # Pool
-            [144, 238, 144],  # Grass
+
+            [0, 0, 0],          # Background
+
+            [255, 0, 0],        # Building-Flooded
+
+            [180, 0, 0],        # Building-Non-Flooded
+
+            [0, 0, 255],        # Road-Flooded
+
+            [0, 0, 150],        # Road-Non-Flooded
+
+            [0, 255, 255],      # Water
+
+            [0, 128, 0],        # Tree
+
+            [255, 255, 0],      # Vehicle
+
+            [0, 255, 0],        # Pool
+
+            [144, 238, 144],    # Grass
+
         ], dtype=np.uint8)
 
-        color_mask = palette[mask]
 
-        Image.fromarray(color_mask).save(output_path)
+        color_mask = palette[
+            mask
+        ]
+
+
+        Image.fromarray(
+            color_mask
+        ).save(
+            output_path
+        )
 
 
 # ============================================================
-# COMMAND-LINE USAGE (quick manual testing)
+# COMMAND LINE USAGE
 # ============================================================
 
 if __name__ == "__main__":
 
     if len(sys.argv) < 2:
 
-        print("Usage: python predict.py <image_path> [model_path]")
+        print(
+            "Usage: python predict.py "
+            "<image_path> [model_path]"
+        )
 
         sys.exit(1)
 
+
     image_path = sys.argv[1]
 
+
     model_path = (
+
         sys.argv[2]
+
         if len(sys.argv) > 2
+
         else str(
-            PROJECT_ROOT / "outputs" / "best_model_ce_dice.pth"
+            PROJECT_ROOT
+            /
+            "outputs"
+            /
+            "best_model_weighted.pth"
+        )
+
+    )
+
+
+    predictor = FloodPredictor(
+        model_path
+    )
+
+
+    result = predictor.predict(
+        image_path
+    )
+
+
+    # --------------------------------------------------------
+    # Don't print raw mask
+    # --------------------------------------------------------
+
+    printable = {
+
+        k: v
+
+        for k, v in result.items()
+
+        if k not in (
+            "mask",
+            "mask_original_size"
+        )
+
+    }
+
+
+    print(
+        json.dumps(
+            printable,
+            indent=2
         )
     )
 
-    predictor = FloodPredictor(model_path)
 
-    result = predictor.predict(image_path)
-
-    # Don't dump the raw mask array to stdout, just the summary
-    printable = {
-        k: v
-        for k, v in result.items()
-        if k not in ("mask", "mask_original_size")
-    }
-
-    print(json.dumps(printable, indent=2))
+    # --------------------------------------------------------
+    # Save visualization
+    # --------------------------------------------------------
 
     predictor.save_visualization(
         result["mask"],
         "prediction_visualization.png"
     )
 
-    print("\nSaved visualization to prediction_visualization.png")
+
+    print(
+        "\nSaved visualization to "
+        "prediction_visualization.png"
+    )
