@@ -2,7 +2,7 @@
 DisasterLens Backend - FastAPI entrypoint
 
 Architecture (matches project design):
-  Frontend (React) -> FastAPI (this layer) -> CV/DL models (U-Net severity, YOLO detection)
+  Frontend (React) -> FastAPI (this layer) -> CV/DL models (U-Net severity)
                                             -> Database (incidents, users)
                                             -> Geospatial / real-time layer
 """

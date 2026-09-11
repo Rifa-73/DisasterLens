@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, String, DateTime
+from sqlalchemy import Column, Integer, Float, String, DateTime, JSON
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -21,5 +21,6 @@ class Incident(Base):
     # file itself - the actual file lives on disk under app/media/.
     audio_path = Column(String, nullable=True)
     video_path = Column(String, nullable=True)
+    ai_assessment = Column(JSON, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

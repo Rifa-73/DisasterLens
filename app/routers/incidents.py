@@ -144,6 +144,7 @@ async def report_incident(
         confidence=severity.severity_score,
         audio_path=audio_path,
         video_path=video_path,
+        ai_assessment=ai_assessment,
     )
     db.add(db_incident)
     db.commit()
@@ -180,6 +181,7 @@ def list_incidents(
                 flood_coverage_pct=r.flood_coverage_pct,
                 severity_score=r.confidence,
             ),
+            r.ai_assessment,
         )
         for r in rows
     ]
