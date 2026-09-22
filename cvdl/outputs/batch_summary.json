@@ -1,0 +1,210 @@
+{
+    "total_images": 448,
+    "average_flood_coverage_pct": 17.51,
+    "severity_counts": {
+        "High": 111,
+        "Medium": 78,
+        "Low": 179,
+        "None": 80
+    },
+    "highest_severity": {
+        "image": "7450.jpg",
+        "flood_coverage_pct": 94.05,
+        "severity_score": 94.05,
+        "severity_label": "High",
+        "class_percentages": {
+            "Background": 0.0,
+            "Building-Flooded": 8.87,
+            "Building-Non-Flooded": 1.23,
+            "Road-Flooded": 39.8,
+            "Road-Non-Flooded": 0.0,
+            "Water": 45.38,
+            "Tree": 2.68,
+            "Vehicle": 0.0,
+            "Pool": 0.0,
+            "Grass": 2.03
+        }
+    },
+    "top_10": [
+        {
+            "image": "7450.jpg",
+            "flood_coverage_pct": 94.05,
+            "severity_score": 94.05,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 8.87,
+                "Building-Non-Flooded": 1.23,
+                "Road-Flooded": 39.8,
+                "Road-Non-Flooded": 0.0,
+                "Water": 45.38,
+                "Tree": 2.68,
+                "Vehicle": 0.0,
+                "Pool": 0.0,
+                "Grass": 2.03
+            }
+        },
+        {
+            "image": "7355.jpg",
+            "flood_coverage_pct": 89.32,
+            "severity_score": 89.32,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 1.97,
+                "Building-Non-Flooded": 0.03,
+                "Road-Flooded": 35.89,
+                "Road-Non-Flooded": 0.0,
+                "Water": 51.46,
+                "Tree": 5.84,
+                "Vehicle": 0.05,
+                "Pool": 0.0,
+                "Grass": 4.78
+            }
+        },
+        {
+            "image": "7284.jpg",
+            "flood_coverage_pct": 89.16,
+            "severity_score": 89.16,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 4.61,
+                "Building-Non-Flooded": 0.48,
+                "Road-Flooded": 18.25,
+                "Road-Non-Flooded": 0.33,
+                "Water": 66.3,
+                "Tree": 0.27,
+                "Vehicle": 0.01,
+                "Pool": 0.17,
+                "Grass": 9.56
+            }
+        },
+        {
+            "image": "7457.jpg",
+            "flood_coverage_pct": 88.25,
+            "severity_score": 88.25,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 10.84,
+                "Building-Non-Flooded": 1.48,
+                "Road-Flooded": 43.75,
+                "Road-Non-Flooded": 0.0,
+                "Water": 33.66,
+                "Tree": 7.68,
+                "Vehicle": 0.18,
+                "Pool": 0.09,
+                "Grass": 2.32
+            }
+        },
+        {
+            "image": "7361.jpg",
+            "flood_coverage_pct": 83.93,
+            "severity_score": 83.93,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 10.29,
+                "Building-Non-Flooded": 0.16,
+                "Road-Flooded": 41.61,
+                "Road-Non-Flooded": 0.0,
+                "Water": 32.03,
+                "Tree": 8.75,
+                "Vehicle": 0.26,
+                "Pool": 0.41,
+                "Grass": 6.5
+            }
+        },
+        {
+            "image": "7755.jpg",
+            "flood_coverage_pct": 82.92,
+            "severity_score": 82.92,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 0.0,
+                "Building-Non-Flooded": 0.0,
+                "Road-Flooded": 0.0,
+                "Road-Non-Flooded": 0.0,
+                "Water": 82.92,
+                "Tree": 0.88,
+                "Vehicle": 0.0,
+                "Pool": 0.0,
+                "Grass": 16.2
+            }
+        },
+        {
+            "image": "7359.jpg",
+            "flood_coverage_pct": 82.88,
+            "severity_score": 82.88,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 4.9,
+                "Building-Non-Flooded": 0.41,
+                "Road-Flooded": 40.45,
+                "Road-Non-Flooded": 0.0,
+                "Water": 37.53,
+                "Tree": 5.89,
+                "Vehicle": 0.14,
+                "Pool": 0.0,
+                "Grass": 10.69
+            }
+        },
+        {
+            "image": "7348.jpg",
+            "flood_coverage_pct": 82.52,
+            "severity_score": 82.52,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 0.0,
+                "Building-Non-Flooded": 0.0,
+                "Road-Flooded": 51.4,
+                "Road-Non-Flooded": 0.02,
+                "Water": 31.12,
+                "Tree": 9.5,
+                "Vehicle": 0.0,
+                "Pool": 0.0,
+                "Grass": 7.96
+            }
+        },
+        {
+            "image": "7757.jpg",
+            "flood_coverage_pct": 81.33,
+            "severity_score": 81.33,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 0.0,
+                "Building-Non-Flooded": 0.0,
+                "Road-Flooded": 0.0,
+                "Road-Non-Flooded": 0.0,
+                "Water": 81.33,
+                "Tree": 1.25,
+                "Vehicle": 0.0,
+                "Pool": 0.0,
+                "Grass": 17.42
+            }
+        },
+        {
+            "image": "7279.jpg",
+            "flood_coverage_pct": 80.82,
+            "severity_score": 80.82,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 1.98,
+                "Building-Non-Flooded": 2.01,
+                "Road-Flooded": 16.2,
+                "Road-Non-Flooded": 0.84,
+                "Water": 62.64,
+                "Tree": 2.18,
+                "Vehicle": 0.04,
+                "Pool": 0.07,
+                "Grass": 14.04
+            }
+        }
+    ]
+}

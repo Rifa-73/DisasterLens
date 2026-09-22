@@ -1,0 +1,116 @@
+{
+    "video": "cvdl/outputs/test_flood_video.mp4",
+    "duration_seconds": 10.0,
+    "duration": "00:10",
+    "sampling_interval_seconds": 2.0,
+    "frames_analyzed": 5,
+    "average_flood_coverage_pct": 83.75,
+    "average_severity_score": 83.75,
+    "peak_flood_coverage_pct": 91.16,
+    "peak_severity_score": 91.16,
+    "peak_severity_label": "High",
+    "peak_timestamp": "00:00",
+    "severity_counts": {
+        "High": 5,
+        "Medium": 0,
+        "Low": 0,
+        "None": 0
+    },
+    "frame_results": [
+        {
+            "timestamp_seconds": 0.0,
+            "timestamp": "00:00",
+            "flood_coverage_pct": 91.16,
+            "severity_score": 91.16,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 7.22,
+                "Building-Non-Flooded": 2.12,
+                "Road-Flooded": 40.63,
+                "Road-Non-Flooded": 0.0,
+                "Water": 43.31,
+                "Tree": 3.09,
+                "Vehicle": 0.0,
+                "Pool": 0.0,
+                "Grass": 3.61
+            }
+        },
+        {
+            "timestamp_seconds": 2.0,
+            "timestamp": "00:02",
+            "flood_coverage_pct": 88.03,
+            "severity_score": 88.03,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 4.5,
+                "Building-Non-Flooded": 0.28,
+                "Road-Flooded": 21.61,
+                "Road-Non-Flooded": 0.22,
+                "Water": 61.92,
+                "Tree": 0.54,
+                "Vehicle": 0.02,
+                "Pool": 0.15,
+                "Grass": 10.74
+            }
+        },
+        {
+            "timestamp_seconds": 4.0,
+            "timestamp": "00:04",
+            "flood_coverage_pct": 82.71,
+            "severity_score": 82.71,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 9.86,
+                "Building-Non-Flooded": 0.08,
+                "Road-Flooded": 41.95,
+                "Road-Non-Flooded": 0.0,
+                "Water": 30.9,
+                "Tree": 9.51,
+                "Vehicle": 0.32,
+                "Pool": 0.34,
+                "Grass": 7.05
+            }
+        },
+        {
+            "timestamp_seconds": 6.0,
+            "timestamp": "00:06",
+            "flood_coverage_pct": 81.59,
+            "severity_score": 81.59,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 4.71,
+                "Building-Non-Flooded": 0.21,
+                "Road-Flooded": 42.91,
+                "Road-Non-Flooded": 0.0,
+                "Water": 33.97,
+                "Tree": 6.49,
+                "Vehicle": 0.19,
+                "Pool": 0.0,
+                "Grass": 11.52
+            }
+        },
+        {
+            "timestamp_seconds": 8.0,
+            "timestamp": "00:08",
+            "flood_coverage_pct": 75.25,
+            "severity_score": 75.25,
+            "severity_label": "High",
+            "class_percentages": {
+                "Background": 0.0,
+                "Building-Flooded": 0.0,
+                "Building-Non-Flooded": 0.0,
+                "Road-Flooded": 1.08,
+                "Road-Non-Flooded": 0.0,
+                "Water": 74.17,
+                "Tree": 1.07,
+                "Vehicle": 0.0,
+                "Pool": 0.0,
+                "Grass": 23.68
+            }
+        }
+    ]
+}

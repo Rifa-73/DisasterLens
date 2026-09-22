@@ -1,0 +1,13 @@
+{
+    "frames_analyzed": 10,
+    "smoothing_window": 3,
+    "average_raw_flood_coverage_pct": 81.76,
+    "average_smoothed_flood_coverage_pct": 82.95,
+    "peak_smoothed_flood_coverage_pct": 89.98,
+    "peak_frame": 1,
+    "peak_severity": "High",
+    "high_frames": 10,
+    "medium_frames": 0,
+    "low_frames": 0,
+    "output_video": "/Users/rifa/Desktop/DisasterLens/cvdl/outputs/test_flood_video_smoothed.mp4"
+}
