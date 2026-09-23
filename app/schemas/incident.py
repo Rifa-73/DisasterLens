@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
 from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class SeverityResult(BaseModel):
@@ -66,3 +68,5 @@ class IncidentOut(BaseModel):
     audio_url: Optional[str] = None
     video_url: Optional[str] = None
     ai_assessment: Optional[GeminiAssessment] = None
+    # When the incident was reported (UTC). Frontend converts to local time.
+    created_at: Optional[datetime] = None

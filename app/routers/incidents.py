@@ -1,5 +1,6 @@
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -101,6 +102,17 @@ async def _save_optional_media(
     return f"media/{kind}/{unique_name}"
 
 
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    SQLite returns naive datetimes (stored in UTC). Attach UTC explicitly so
+    the API returns '...+00:00' and the frontend converts to local time
+    (e.g. IST) correctly instead of treating it as already-local.
+    """
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _to_incident_out(db_incident: Incident, severity: SeverityResult, ai_assessment=None) -> IncidentOut:
     return IncidentOut(
         id=db_incident.id,
@@ -111,6 +123,7 @@ def _to_incident_out(db_incident: Incident, severity: SeverityResult, ai_assessm
         audio_url=f"/{db_incident.audio_path}" if db_incident.audio_path else None,
         video_url=f"/{db_incident.video_path}" if db_incident.video_path else None,
         ai_assessment=ai_assessment,
+        created_at=_as_utc(db_incident.created_at),
     )
 
 
