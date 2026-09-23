@@ -1,11 +1,12 @@
 import os
-import json
 import io
+
 from dotenv import load_dotenv
 from google.genai import errors
 from google import genai
 from google.genai import types
 from PIL import Image
+
 
 load_dotenv()
 
@@ -60,6 +61,65 @@ Do not claim the disaster is officially confirmed.
         raise
 
 
+def cross_check_evidence(gemini, cvdl):
+    """
+    Compare Gemini disaster assessment with CVDL flood analysis.
+    """
+
+    disaster = str(gemini.get("disaster_type", "")).lower()
+    likelihood = str(gemini.get("likelihood", "")).lower()
+
+    severity = str(cvdl.get("severity_level", "")).lower()
+    coverage = float(cvdl.get("flood_coverage_pct", 0))
+
+    gemini_flood = "flood" in disaster
+    cvdl_flood = coverage >= 10
+
+    agreement = gemini_flood == cvdl_flood
+    contradiction = False
+
+    # Strong contradiction:
+    # Gemini says flood but CVDL detects very little flood.
+    if gemini_flood and severity == "low" and coverage < 10:
+        contradiction = True
+
+    # Strong contradiction:
+    # Gemini says non-flood but CVDL detects significant flooding.
+    if not gemini_flood and coverage >= 30:
+        contradiction = True
+
+    if contradiction:
+        reliability = "low"
+        human_verification_required = True
+        reason = (
+            "Gemini assessment and visual flood analysis show conflicting evidence."
+        )
+
+    elif agreement and (
+        severity == "severe" or likelihood in {"high", "very high"}
+    ):
+        reliability = "high"
+        human_verification_required = False
+        reason = (
+            "Gemini assessment and visual flood analysis are consistent."
+        )
+
+    else:
+        reliability = "moderate"
+        human_verification_required = True
+        reason = (
+            "Evidence is partially consistent and should be reviewed."
+        )
+
+    return {
+        "agreement": agreement,
+        "contradiction": contradiction,
+        "reliability": reliability,
+        "human_verification_required": human_verification_required,
+        "reason": reason,
+    }
+
+
 def chat_with_gemini(question: str, incident: dict):
     q = question.lower()
 
@@ -69,8 +129,10 @@ def chat_with_gemini(question: str, incident: dict):
 
         if evidence.get("image"):
             items.append("image")
+
         if evidence.get("video"):
             items.append("video")
+
         if evidence.get("audio"):
             items.append("audio")
 
@@ -86,19 +148,24 @@ Answer the responder's question using only this incident data:
 Question: {question}
 Keep the answer short and clear.
 """
+
         response = client.models.generate_content(
             model=MODEL,
             contents=prompt
         )
+
         return response.text
 
     except errors.ClientError as e:
         if e.code == 429:
             return fallback_answer(question, incident)
+
         raise
+
 
 def fallback_answer(question: str, incident: dict):
     q = question.lower()
+
     ai = incident.get("ai_assessment") or {}
     cv = incident.get("cvdl") or {}
 
@@ -108,8 +175,10 @@ def fallback_answer(question: str, incident: dict):
 
         if evidence.get("image"):
             items.append("image")
+
         if evidence.get("video"):
             items.append("video")
+
         if evidence.get("audio"):
             items.append("audio")
 
@@ -125,7 +194,10 @@ def fallback_answer(question: str, incident: dict):
         )
 
     if "priority" in q:
-        return f"Priority is {ai.get('priority', 'N/A')}. {ai.get('reason', '')}"
+        return (
+            f"Priority is {ai.get('priority', 'N/A')}. "
+            f"{ai.get('reason', '')}"
+        )
 
     if "summarize" in q or "incident" in q:
         return (

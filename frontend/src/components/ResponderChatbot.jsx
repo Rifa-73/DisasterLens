@@ -12,17 +12,15 @@ function ResponderChatbot({ report }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
-
-  const ai = report?.aiAssessment;
-  const cv = report?.cvAssessment;
-
+  const [loading, setLoading] = useState(false);
 
   const sendMessage = async (text = message) => {
-    if (!text.trim()) return;
-  
+    if (!text.trim() || loading) return;
+
     setMessages((m) => [...m, { type: "user", text }]);
     setMessage("");
-  
+    setLoading(true);
+
     try {
       const res = await fetch("http://localhost:8000/incidents/chat", {
         method: "POST",
@@ -31,24 +29,49 @@ function ResponderChatbot({ report }) {
           question: text,
           incident: {
             description: report?.description,
-            ai_assessment: report?.aiAssessment,
-            cvdl: report?.cvAssessment,
             location: report?.location,
-            evidence: report?.evidence, 
+
+            ai_assessment: report?.aiAssessment,
+
+            cvdl: report?.cvAssessment,
+
+            evidence: report?.evidence,
+
+            evidence_assessment: report?.evidenceAssessment,
+
+            human_verification_required:
+              report?.evidenceAssessment?.human_verification_required ||
+              report?.aiAssessment?.needs_human_verification,
           },
         }),
       });
-  
+
+      if (!res.ok) {
+        throw new Error("Chat request failed");
+      }
+
       const data = await res.json();
-  
-      setMessages((m) => [...m, { type: "bot", text: data.answer }]);
+
+      setMessages((m) => [
+        ...m,
+        {
+          type: "bot",
+          text: data.answer || "No response received from the AI assistant.",
+        },
+      ]);
     } catch {
       setMessages((m) => [
         ...m,
-        { type: "bot", text: "Unable to connect to the AI assistant." },
+        {
+          type: "bot",
+          text: "Unable to connect to the AI assistant.",
+        },
       ]);
+    } finally {
+      setLoading(false);
     }
   };
+
   return (
     <>
       {!open && (
@@ -62,19 +85,27 @@ function ResponderChatbot({ report }) {
 
       {open && (
         <div className="fixed bottom-6 right-6 z-[2000] w-80 md:w-96 bg-white border border-[#DDE5DE] rounded-2xl shadow-xl overflow-hidden">
+
+          {/* Header */}
           <div className="flex justify-between items-center px-5 py-4 bg-[#2F7D4A] text-white">
             <div className="flex items-center gap-3">
               <Bot className="w-5" />
               <div>
-                <p className="font-semibold text-sm">Responder Assistant</p>
-                <p className="text-xs text-white/80">Incident support</p>
+                <p className="font-semibold text-sm">
+                  Responder Assistant
+                </p>
+                <p className="text-xs text-white/80">
+                  Incident support
+                </p>
               </div>
             </div>
+
             <button onClick={() => setOpen(false)}>
               <X className="w-5" />
             </button>
           </div>
 
+          {/* Messages */}
           <div className="h-72 overflow-y-auto p-4 bg-[#F7F8F5]">
             {!messages.length && (
               <>
@@ -111,19 +142,30 @@ function ResponderChatbot({ report }) {
                 {m.text}
               </div>
             ))}
+
+            {loading && (
+              <div className="mr-8 p-3 rounded-xl bg-white border border-[#DDE5DE] text-sm text-gray-500">
+                Analyzing incident...
+              </div>
+            )}
           </div>
 
+          {/* Input */}
           <div className="p-3 border-t border-[#DDE5DE] flex gap-2">
             <input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+              onKeyDown={(e) =>
+                e.key === "Enter" && sendMessage()
+              }
               placeholder="Ask about this incident..."
               className="flex-1 px-3 py-2 rounded-lg border border-[#DDE5DE] text-sm outline-none focus:border-[#2F7D4A]"
             />
+
             <button
               onClick={() => sendMessage()}
-              className="w-10 rounded-lg bg-[#2F7D4A] text-white flex items-center justify-center"
+              disabled={loading}
+              className="w-10 rounded-lg bg-[#2F7D4A] text-white flex items-center justify-center disabled:opacity-50"
             >
               <Send className="w-4" />
             </button>

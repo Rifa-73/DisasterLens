@@ -1,9 +1,11 @@
 import Navbar from "../components/Navbar";
 import ResponderChatbot from "../components/ResponderChatbot";
+
 import {
   MapContainer,
   TileLayer,
   Marker,
+  Circle,
   Popup,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -17,6 +19,7 @@ import {
   Video,
   Mic,
   ArrowRight,
+  CheckCircle,
 } from "lucide-react";
 
 import { useEffect, useState } from "react";
@@ -24,8 +27,10 @@ import { useNavigate } from "react-router-dom";
 
 function Dashboard() {
   const navigate = useNavigate();
+
   const [report, setReport] = useState(null);
   const [notificationOpen, setNotificationOpen] = useState(false);
+
   const [lastSeenId, setLastSeenId] = useState(
     Number(localStorage.getItem("lastSeenIncidentId") || 0)
   );
@@ -36,8 +41,6 @@ function Dashboard() {
         const res = await fetch("http://localhost:8000/incidents/");
         const data = await res.json();
 
-        console.log("Incidents from backend:", data);
-
         if (!data.length) return;
 
         const latest = data.reduce((a, b) =>
@@ -46,11 +49,16 @@ function Dashboard() {
 
         setReport({
           id: latest.id,
+          latitude: Number(latest.latitude),
+          longitude: Number(latest.longitude),
           location: `${latest.latitude}, ${latest.longitude}`,
           description: latest.description,
           aiAssessment: latest.ai_assessment,
           cvAssessment: latest.severity,
+          evidenceAssessment: latest.evidence_assessment,
+
           evidence: {
+            image: latest.image_url,
             video: latest.video_url,
             audio: latest.audio_url,
           },
@@ -60,38 +68,57 @@ function Dashboard() {
       }
     };
 
-
     fetchIncidents();
+
     const interval = setInterval(fetchIncidents, 5000);
 
     return () => clearInterval(interval);
   }, []);
 
-  const location = report?.location
-    ? report.location.split(",").map(Number)
-    : [28.6139, 77.209];
+  const location =
+    Number.isFinite(report?.latitude) &&
+    Number.isFinite(report?.longitude)
+      ? [report.latitude, report.longitude]
+      : report?.location
+      ? report.location.split(",").map(Number)
+      : [28.6139, 77.209];
 
   const ai = report?.aiAssessment;
   const cv = report?.cvAssessment;
+  const evidence = report?.evidenceAssessment;
 
   const aiPriority = ai?.priority?.toLowerCase();
-  
-  const priority =
-    ["high", "medium", "low"].includes(aiPriority)
-      ? aiPriority
-      : cv?.severity_level === "severe"
-      ? "high"
-      : cv?.severity_level === "moderate"
-      ? "medium"
-      : cv?.severity_level === "low"
-      ? "low"
-      : "unknown";
-  
+
+  const priority = ["high", "medium", "low"].includes(aiPriority)
+    ? aiPriority
+    : cv?.severity_level === "severe"
+    ? "high"
+    : cv?.severity_level === "moderate"
+    ? "medium"
+    : cv?.severity_level === "low"
+    ? "low"
+    : "unknown";
+
   const priorityCount = {
     high: priority === "high" ? 1 : 0,
     medium: priority === "medium" ? 1 : 0,
     low: priority === "low" ? 1 : 0,
   };
+
+  const timeline = [
+    ["Report Received", true],
+    ["Gemini Analysis", !!ai],
+    ["CVDL Analysis", !!cv],
+    ["Evidence Cross-Check", !!evidence],
+    ["Human Verification", evidence?.human_verification_required],
+  ];
+
+  const floodCoverage = Number(cv?.flood_coverage_pct) || 0;
+
+  const affectedRadius = Math.max(
+    300,
+    Math.min(3000, floodCoverage * 30)
+  );
 
   return (
     <div className="min-h-screen bg-[#F7F8F5] text-[#17201A]">
@@ -136,7 +163,9 @@ function Dashboard() {
               className="p-5 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm"
             >
               <p className="text-sm text-[#68736B]">{title}</p>
+
               <p className="text-3xl font-bold mt-2">{count}</p>
+
               <p className="text-xs text-[#68736B] mt-2">{text}</p>
             </div>
           ))}
@@ -152,44 +181,54 @@ function Dashboard() {
                 <h2 className="text-lg font-semibold">
                   Incoming Incident
                 </h2>
+
                 <p className="text-xs text-gray-600 mt-1">
                   Latest report requiring attention
                 </p>
               </div>
-                  <div className="relative">
-                    <button onClick={() => {
-                        setNotificationOpen(!notificationOpen);
 
-                        if (report) {
-                          localStorage.setItem("lastSeenIncidentId", report.id);
-                          setLastSeenId(report.id);
-                        }
-                      }}>
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setNotificationOpen(!notificationOpen);
 
-                      <Bell className="w-5 h-5 text-gray-500" />
-                     {report && report.id > lastSeenId && (
-                        <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-red-500 border-2 border-[#EAF4EC]" />
-                      )}
-                    </button>
+                    if (report) {
+                      localStorage.setItem(
+                        "lastSeenIncidentId",
+                        report.id
+                      );
 
+                      setLastSeenId(report.id);
+                    }
+                  }}
+                >
+                  <Bell className="w-5 h-5 text-gray-500" />
 
-                    {notificationOpen && report && (
-                      <div className="absolute right-0 top-12 z-50 w-72 p-4 bg-white border border-[#DDE5DE] rounded-2xl shadow-xl">
-                        <div className="flex items-start gap-3">
-                          <div className="p-2 rounded-xl bg-[#FDECEC]">
-                            <AlertTriangle className="w-5 h-5 text-red-500" />
-                          </div>
-                                        
-                          <div>
-                            <p className="font-semibold text-sm">New Incident</p>
-                            <p className="text-xs text-[#68736B] mt-1">
-                              A new disaster report has been submitted.
-                            </p>
-                          </div>
-                        </div>
+                  {report && report.id > lastSeenId && (
+                    <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-red-500 border-2 border-[#EAF4EC]" />
+                  )}
+                </button>
+
+                {notificationOpen && report && (
+                  <div className="absolute right-0 top-12 z-50 w-72 p-4 bg-white border border-[#DDE5DE] rounded-2xl shadow-xl">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 rounded-xl bg-[#FDECEC]">
+                        <AlertTriangle className="w-5 h-5 text-red-500" />
                       </div>
-                    )}
+
+                      <div>
+                        <p className="font-semibold text-sm">
+                          New Incident
+                        </p>
+
+                        <p className="text-xs text-[#68736B] mt-1">
+                          A new disaster report has been submitted.
+                        </p>
+                      </div>
+                    </div>
                   </div>
+                )}
+              </div>
             </div>
 
             <div className="p-5 rounded-2xl border border-red-200 bg-white shadow-sm">
@@ -205,10 +244,9 @@ function Dashboard() {
                 }`}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-white" />
-                {priority ? priority.toUpperCase() : "UNKNOWN"} PRIORITY
+                {priority.toUpperCase()} PRIORITY
               </span>
 
-              {/* DETAILS */}
               <h3 className="text-xl font-semibold mt-4">
                 {ai?.disaster_type || "Possible Incident"}
               </h3>
@@ -220,6 +258,7 @@ function Dashboard() {
 
               <div className="flex items-start gap-2 text-sm text-[#68736B] mt-2">
                 <AlertTriangle className="w-4 h-4 mt-0.5" />
+
                 {report?.description || "No description provided."}
               </div>
 
@@ -257,11 +296,13 @@ function Dashboard() {
                   </p>
 
                   <p className="text-sm text-[#68736B] mt-1">
-                    Flood Coverage: <b>{cv.flood_coverage_pct}%</b>
+                    Flood Coverage:{" "}
+                    <b>{cv.flood_coverage_pct}%</b>
                   </p>
 
                   <p className="text-sm text-[#68736B] mt-1">
-                    Severity Score: <b>{cv.severity_score}/100</b>
+                    Severity Score:{" "}
+                    <b>{cv.severity_score}/100</b>
                   </p>
                 </div>
               )}
@@ -274,7 +315,7 @@ function Dashboard() {
                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#F3F7F3] text-xs text-[#2F7D4A]"
                   >
                     <Image className="w-3.5 h-3.5" />
-                    View Image
+                    Image
                   </button>
                 )}
 
@@ -303,15 +344,16 @@ function Dashboard() {
             </div>
           </div>
 
-          {/* MAP */}
+          {/* LIVE MAP + AFFECTED AREA */}
           <div className="lg:col-span-3">
             <div className="flex justify-between mb-4">
               <div>
                 <h2 className="text-lg font-semibold">
                   Live Incident Map
                 </h2>
+
                 <p className="text-xs text-gray-600 mt-1">
-                  Geographical overview of the incident
+                  Incident location and estimated affected area
                 </p>
               </div>
 
@@ -332,25 +374,111 @@ function Dashboard() {
 
                 <Marker position={location}>
                   <Popup>
-                    <b>{ai?.disaster_type || "Possible Incident"}</b>
+                    <b>
+                      {ai?.disaster_type || "Possible Incident"}
+                    </b>
+
                     <br />
+
                     Priority: {priority.toUpperCase()}
+
                     <br />
+
                     Location: {report?.location || "Delhi"}
+
+                    <br />
+
+                    Flood Coverage: {floodCoverage}%
+
+                    <br />
+
+                    Severity: {cv?.severity_level || "N/A"}
                   </Popup>
                 </Marker>
+
+                {report && cv && (
+                  <Circle
+                    center={location}
+                    radius={affectedRadius}
+                    pathOptions={{
+                      fillOpacity: 0.2,
+                      weight: 2,
+                    }}
+                  />
+                )}
               </MapContainer>
             </div>
+
+            {/* MAP INFO */}
+            {report && cv && (
+              <div className="mt-3 text-xs text-gray-600">
+                <b>Flood Coverage:</b> {floodCoverage}% &nbsp; • &nbsp;
+                <b>Severity:</b> {cv.severity_level || "N/A"}
+              </div>
+            )}
           </div>
         </div>
+
+        {/* INCIDENT TIMELINE */}
+        {report && (
+          <div className="mt-8 p-6 rounded-2xl bg-white border border-[#DDE5DE] shadow-sm">
+
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">
+                  Incident Timeline
+                </h2>
+
+                <p className="text-xs text-[#68736B] mt-1">
+                  Evidence processing and verification flow
+                </p>
+              </div>
+
+              <Clock className="w-5 h-5 text-[#68736B]" />
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center mt-6">
+              {timeline.map(([title, completed], index) => (
+                <div
+                  key={title}
+                  className="flex items-center flex-1"
+                >
+                  <div className="flex items-center gap-2">
+                    <CheckCircle
+                      className={`w-5 h-5 ${
+                        completed
+                          ? "text-[#2F7D4A]"
+                          : "text-gray-300"
+                      }`}
+                    />
+
+                    <span
+                      className={`text-xs font-medium ${
+                        completed
+                          ? "text-[#17201A]"
+                          : "text-gray-400"
+                      }`}
+                    >
+                      {title}
+                    </span>
+                  </div>
+
+                  {index < timeline.length - 1 && (
+                    <div className="hidden md:block flex-1 h-px bg-[#DDE5DE] mx-3" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex justify-end items-center gap-2 text-xs text-gray-700 mt-5">
           <Clock className="w-3.5 h-3.5" />
           Last updated just now
         </div>
-
       </main>
-      <ResponderChatbot report={report}/>
+
+      <ResponderChatbot report={report} />
     </div>
   );
 }
