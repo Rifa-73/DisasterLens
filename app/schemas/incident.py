@@ -27,6 +27,34 @@ class IncidentCreate(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
 
 
+class BatchImageResult(BaseModel):
+    """One image's result within a batch assessment, ranked by severity."""
+    filename: str
+    rank: int                    # 1 = worst flooding in the batch
+    severity: SeverityResult
+
+
+class BatchSeverityResponse(BaseModel):
+    """Response for assessing + ranking multiple images at once."""
+    total_images: int
+    results: list[BatchImageResult]      # sorted worst-to-best
+    highest_severity: BatchImageResult   # convenience - same as results[0]
+
+
+class VideoSeverityResult(BaseModel):
+    """Aggregated result of analyzing every frame of an uploaded video."""
+    frames_analyzed: int
+    fps: float
+    average_flood_coverage_pct: float
+    peak_flood_coverage_pct: float
+    peak_frame: int              # frame number where flooding was worst
+    peak_severity: str           # e.g. "High", "Medium", "Low", "None"
+    severity_level: str          # same low/moderate/severe scale as images
+    high_frames: int
+    medium_frames: int
+    low_frames: int
+
+
 class IncidentOut(BaseModel):
     """What we return once an incident is stored + assessed."""
     id: int

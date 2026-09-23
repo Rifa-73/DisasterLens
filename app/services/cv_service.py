@@ -20,6 +20,7 @@ if str(CVDL_SRC) not in sys.path:
     sys.path.insert(0, str(CVDL_SRC))
 
 from predict_api import FloodPredictor  # teammate's inference class
+from predict_video import FloodVideoPredictor  # teammate's video inference class
 
 from app.schemas.incident import SeverityResult
 
@@ -51,3 +52,40 @@ def assess_flood_severity(image_bytes: bytes) -> SeverityResult:
         flood_coverage_pct=flood_coverage_pct,
         severity_score=result["severity_score"],
     )
+
+
+def assess_flood_severity_batch(images: list[bytes]) -> list[SeverityResult]:
+    """
+    Runs each image through the same loaded model, one at a time.
+    Order of results matches the order of the input list.
+    """
+    return [assess_flood_severity(image_bytes) for image_bytes in images]
+
+
+# ------------------------------------------------------------------
+# Video analysis
+# ------------------------------------------------------------------
+# Loaded lazily (only the first time a video is actually analyzed),
+# since most requests are just images and don't need this in memory.
+_video_predictor: FloodVideoPredictor | None = None
+
+
+def _get_video_predictor() -> FloodVideoPredictor:
+    global _video_predictor
+    if _video_predictor is None:
+        _video_predictor = FloodVideoPredictor(str(MODEL_PATH))
+    return _video_predictor
+
+
+def assess_flood_severity_video(video_path: str) -> dict:
+    """
+    Runs a video frame-by-frame through the U-Net model and returns
+    aggregated stats (average/peak flood coverage, per-frame severity
+    counts). Unlike images, this needs a real file path on disk - OpenCV
+    can't read video straight from bytes - so the caller must save the
+    upload to a temp file first and pass that path in.
+    """
+    predictor = _get_video_predictor()
+    result = predictor.predict_video(video_path)
+    result["severity_level"] = _SEVERITY_MAP.get(result["peak_severity"], "low")
+    return result
