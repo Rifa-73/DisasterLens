@@ -1,6 +1,8 @@
+import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 from app.services.gemini_service import chat_with_gemini
@@ -9,8 +11,18 @@ from app.services.gemini_service import analyze_image
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, Query
 from sqlalchemy.orm import Session
 
-from app.services.cv_service import assess_flood_severity
-from app.schemas.incident import SeverityResult, IncidentOut
+from app.services.cv_service import (
+    assess_flood_severity,
+    assess_flood_severity_batch,
+    assess_flood_severity_video,
+)
+from app.schemas.incident import (
+    SeverityResult,
+    IncidentOut,
+    BatchImageResult,
+    BatchSeverityResponse,
+    VideoSeverityResult,
+)
 from app.database import get_db
 from app.models.incident import Incident
 
@@ -22,6 +34,10 @@ router = APIRouter()
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_SIZE_MB = 5
 MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
+
+# Batch endpoint - cap the count so one request can't tie up the model
+# for minutes (each image runs through the full U-Net forward pass).
+MAX_BATCH_IMAGES = 10
 
 # ------------------------------------------------------------------
 # Audio/video validation (NOT analyzed by the AI model - saved as
@@ -86,6 +102,17 @@ async def _save_optional_media(
     return f"media/{kind}/{unique_name}"
 
 
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    SQLite returns naive datetimes (stored in UTC). Attach UTC explicitly so
+    the API returns '...+00:00' and the frontend converts to local time
+    (e.g. IST) correctly instead of treating it as already-local.
+    """
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _to_incident_out(db_incident: Incident, severity: SeverityResult, ai_assessment=None) -> IncidentOut:
     return IncidentOut(
         id=db_incident.id,
@@ -96,6 +123,7 @@ def _to_incident_out(db_incident: Incident, severity: SeverityResult, ai_assessm
         audio_url=f"/{db_incident.audio_path}" if db_incident.audio_path else None,
         video_url=f"/{db_incident.video_path}" if db_incident.video_path else None,
         ai_assessment=ai_assessment,
+        created_at=_as_utc(db_incident.created_at),
     )
 
 
@@ -108,6 +136,100 @@ async def assess_image(file: UploadFile = File(...)):
     image_bytes = await file.read()
     _validate_image(file, image_bytes)
     return assess_flood_severity(image_bytes)
+
+
+@router.post("/assess-batch", response_model=BatchSeverityResponse)
+async def assess_images_batch(files: List[UploadFile] = File(...)):
+    """
+    Run multiple uploaded images through the CV model in one request and
+    rank them by flood coverage - highest first. Useful for comparing
+    several photos of the same or nearby areas to see which is worst hit.
+    Doesn't save anything to the DB (same as /assess).
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one image is required")
+    if len(files) > MAX_BATCH_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Max {MAX_BATCH_IMAGES} images per batch request",
+        )
+
+    filenames = []
+    image_bytes_list = []
+    for f in files:
+        image_bytes = await f.read()
+        _validate_image(f, image_bytes)
+        filenames.append(f.filename or "unnamed")
+        image_bytes_list.append(image_bytes)
+
+    severities = assess_flood_severity_batch(image_bytes_list)
+
+    # Pair each filename with its result, then sort worst-to-best by
+    # flood coverage so the most urgent images surface first.
+    paired = list(zip(filenames, severities))
+    paired.sort(key=lambda pair: pair[1].flood_coverage_pct, reverse=True)
+
+    results = [
+        BatchImageResult(filename=name, rank=rank, severity=severity)
+        for rank, (name, severity) in enumerate(paired, start=1)
+    ]
+
+    return BatchSeverityResponse(
+        total_images=len(results),
+        results=results,
+        highest_severity=results[0],
+    )
+
+
+@router.post("/assess-video", response_model=VideoSeverityResult)
+async def assess_video(file: UploadFile = File(...)):
+    """
+    Run an uploaded flood video frame-by-frame through the U-Net model
+    and return aggregated severity stats (average/peak flood coverage,
+    plus how many frames fell into each severity band).
+
+    Unlike images, OpenCV needs a real file on disk to read video, so
+    the upload is written to a temp file first and deleted once analysis
+    finishes (even if it fails). Doesn't save anything to the DB.
+    """
+    if file.content_type not in ALLOWED_VIDEO_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Video must be one of: {', '.join(ALLOWED_VIDEO_TYPES)}",
+        )
+
+    video_bytes = await file.read()
+
+    if len(video_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded video is empty")
+    if len(video_bytes) > MAX_VIDEO_SIZE_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=400, detail=f"Video must be under {MAX_VIDEO_SIZE_MB}MB"
+        )
+
+    suffix = Path(file.filename).suffix or ".mp4"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(video_bytes)
+        tmp_path = tmp.name
+
+    try:
+        result = assess_flood_severity_video(tmp_path)
+    finally:
+        # Always clean up the temp file, even if analysis raised.
+        Path(tmp_path).unlink(missing_ok=True)
+
+    return VideoSeverityResult(
+        frames_analyzed=result["frames_analyzed"],
+        fps=result["fps"],
+        average_flood_coverage_pct=result["average_flood_coverage_pct"],
+        peak_flood_coverage_pct=result["peak_flood_coverage_pct"],
+        peak_frame=result["peak_frame"],
+        peak_severity=result["peak_severity"],
+        severity_level=result["severity_level"],
+        high_frames=result["high_frames"],
+        medium_frames=result["medium_frames"],
+        low_frames=result["low_frames"],
+    )
 
 
 @router.post("/report", response_model=IncidentOut)
