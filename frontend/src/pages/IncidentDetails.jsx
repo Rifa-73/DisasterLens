@@ -1,45 +1,484 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
 import Navbar from "../components/Navbar";
+import ResponderChatbot from "../components/ResponderChatbot";
+
 import {
-  ArrowLeft,
+  MapContainer,
+  TileLayer,
+  Marker,
+  Circle,
+  Popup,
+} from "react-leaflet";
+
+import "leaflet/dist/leaflet.css";
+
+import {
+  Bell,
   MapPin,
   AlertTriangle,
+  Clock,
+  Image,
   Video,
   Mic,
-  ShieldAlert,
+  ArrowRight,
   CheckCircle,
-  XCircle,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
 
-function IncidentDetails() {
+function Dashboard() {
   const navigate = useNavigate();
-  const [report, setReport] = useState(null);
+
+  const [reports, setReports] = useState([]);
+  const [filter, setFilter] = useState("all");
+  const [notificationOpen, setNotificationOpen] = useState(false);
+
+  const [lastSeenId, setLastSeenId] = useState(
+    Number(localStorage.getItem("lastSeenIncidentId") || 0)
+  );
 
   useEffect(() => {
-    const savedReport = localStorage.getItem("rnrReport");
+    const fetchIncidents = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/incidents/");
 
-    if (savedReport) {
-      setReport(JSON.parse(savedReport));
-    }
+        if (!res.ok) {
+          throw new Error("Failed to fetch incidents");
+        }
+
+        const data = await res.json();
+
+        const formatted = data
+          .map((item) => ({
+            id: item.id,
+            latitude: Number(item.latitude),
+            longitude: Number(item.longitude),
+            location: `${item.latitude}, ${item.longitude}`,
+            description: item.description,
+            created_at: item.created_at,
+            aiAssessment: item.ai_assessment,
+            cvAssessment: item.severity,
+            evidence: {
+              image: null,
+              video: item.video_url || null,
+              audio: item.audio_url || null,
+            },
+          }))
+          .sort((a, b) => Number(b.id) - Number(a.id));
+
+        /*
+         * The current user's latest report contains the uploaded
+         * image in localStorage because GET /incidents/ does not
+         * currently return image_url.
+         */
+        const saved = localStorage.getItem("rnrReport");
+
+        if (saved && formatted.length) {
+          const localReport = JSON.parse(saved);
+
+          const index = formatted.findIndex(
+            (item) => Number(item.id) === Number(localReport.id)
+          );
+
+          if (index !== -1) {
+            formatted[index] = {
+              ...formatted[index],
+              evidence: {
+                ...formatted[index].evidence,
+                image: localReport.evidence?.image || null,
+              },
+            };
+          }
+        }
+
+        setReports(formatted);
+      } catch (error) {
+        console.error("Failed to fetch incidents:", error);
+      }
+    };
+
+    fetchIncidents();
+
+    const interval = setInterval(fetchIncidents, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
-  if (!report) {
-    return (
-      <div className="min-h-screen bg-[#F7F8F5] text-[#17201A]">
-        <Navbar />
+  const filteredReports =
+    filter === "all"
+      ? reports
+      : reports.filter(
+          (report) =>
+            report.cvAssessment?.severity_level?.toLowerCase() ===
+            filter
+        );
 
-        <main className="max-w-5xl mx-auto px-6 py-12">
-          <p className="text-[#68736B]">
-            No incident report found.
-          </p>
-        </main>
-      </div>
+  const latest = reports[0] || null;
+
+  const getPriority = (report) => {
+    const aiPriority =
+      report?.aiAssessment?.priority?.toLowerCase();
+
+    if (["high", "medium", "low"].includes(aiPriority)) {
+      return aiPriority;
+    }
+
+    const severity =
+      report?.cvAssessment?.severity_level?.toLowerCase();
+
+    if (severity === "severe") return "high";
+    if (severity === "moderate") return "medium";
+    if (severity === "low") return "low";
+
+    return "unknown";
+  };
+
+  const priorityCounts = {
+    high: reports.filter((r) => getPriority(r) === "high").length,
+    medium: reports.filter((r) => getPriority(r) === "medium").length,
+    low: reports.filter((r) => getPriority(r) === "low").length,
+  };
+
+  const openIncident = (report) => {
+    localStorage.setItem(
+      "rnrReport",
+      JSON.stringify(report)
     );
-  }
 
-  const priority =
-    report.aiAssessment?.priority?.toLowerCase() || "unknown";
+    navigate("/incident");
+  };
+
+  const latestLocation =
+    latest &&
+    Number.isFinite(latest.latitude) &&
+    Number.isFinite(latest.longitude)
+      ? [latest.latitude, latest.longitude]
+      : [28.6139, 77.209];
+
+  return (
+    <div className="min-h-screen bg-[#F7F8F5] text-[#17201A]">
+      <Navbar />
+
+      <main className="max-w-7xl mx-auto px-6 py-10">
+
+        {/* HEADER */}
+        <div className="flex justify-between items-end gap-4">
+          <div>
+            <p className="text-xs tracking-[0.25em] text-[#2F7D4A] font-semibold">
+              RESPONSE CENTER
+            </p>
+
+            <h1 className="text-4xl md:text-5xl font-bold mt-3">
+              Incident Dashboard
+            </h1>
+
+            <p className="text-[#68736B] mt-3">
+              Monitor and prioritize incoming disaster incidents.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 px-4 py-2 rounded-full border border-[#BFDAC5] bg-[#EAF4EC]">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-xs text-[#2F7D4A] font-medium">
+              SYSTEM LIVE
+            </span>
+          </div>
+        </div>
+
+        {/* FILTER */}
+        <div className="flex items-center gap-2 mt-8 flex-wrap">
+          <span className="text-sm font-medium mr-2">
+            Severity:
+          </span>
+
+          {["all", "low", "moderate", "severe"].map((item) => (
+            <button
+              key={item}
+              onClick={() => setFilter(item)}
+              className={`px-4 py-2 rounded-lg text-xs font-medium border ${
+                filter === item
+                  ? "bg-[#2F7D4A] text-white border-[#2F7D4A]"
+                  : "bg-white border-[#DDE5DE] text-[#68736B]"
+              }`}
+            >
+              {item === "all"
+                ? "All"
+                : item.charAt(0).toUpperCase() + item.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        {/* STATS */}
+        <div className="grid md:grid-cols-4 gap-4 mt-6">
+          {[
+            [
+              "High Priority",
+              priorityCounts.high,
+              "Immediate attention",
+            ],
+            [
+              "Medium Priority",
+              priorityCounts.medium,
+              "Requires monitoring",
+            ],
+            [
+              "Low Priority",
+              priorityCounts.low,
+              "Low urgency",
+            ],
+            [
+              "Total Incidents",
+              reports.length,
+              "Saved incidents",
+            ],
+          ].map(([title, count, text]) => (
+            <div
+              key={title}
+              className="p-5 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm"
+            >
+              <p className="text-sm text-[#68736B]">
+                {title}
+              </p>
+
+              <p className="text-3xl font-bold mt-2">
+                {count}
+              </p>
+
+              <p className="text-xs text-[#68736B] mt-2">
+                {text}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {/* LATEST INCIDENT + MAP */}
+        {latest && (
+          <div className="grid lg:grid-cols-5 gap-6 mt-8">
+
+            {/* LATEST INCIDENT */}
+            <div className="lg:col-span-2">
+              <div className="flex justify-between mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    Latest Incident
+                  </h2>
+
+                  <p className="text-xs text-gray-600 mt-1">
+                    Most recently submitted report
+                  </p>
+                </div>
+
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      setNotificationOpen(!notificationOpen);
+
+                      localStorage.setItem(
+                        "lastSeenIncidentId",
+                        latest.id
+                      );
+
+                      setLastSeenId(latest.id);
+                    }}
+                  >
+                    <Bell className="w-5 h-5 text-gray-500" />
+
+                    {latest.id > lastSeenId && (
+                      <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-red-500 border-2 border-white" />
+                    )}
+                  </button>
+
+                  {notificationOpen && (
+                    <div className="absolute right-0 top-12 z-50 w-72 p-4 bg-white border border-[#DDE5DE] rounded-2xl shadow-xl">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="w-5 h-5 text-red-500" />
+
+                        <div>
+                          <p className="font-semibold text-sm">
+                            Latest Incident
+                          </p>
+
+                          <p className="text-xs text-[#68736B] mt-1">
+                            Incident #{latest.id} has been submitted.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <IncidentCard
+                report={latest}
+                getPriority={getPriority}
+                onView={openIncident}
+              />
+            </div>
+
+            {/* MAP */}
+            <div className="lg:col-span-3">
+              <div className="flex justify-between mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    Live Incident Map
+                  </h2>
+
+                  <p className="text-xs text-gray-600 mt-1">
+                    Locations of all saved incidents
+                  </p>
+                </div>
+
+                <MapPin className="w-5 h-5 text-gray-500" />
+              </div>
+
+              <div className="h-[520px] rounded-2xl overflow-hidden border border-[#DDE5DE] shadow-sm">
+                <MapContainer
+                  center={latestLocation}
+                  zoom={11}
+                  scrollWheelZoom
+                  className="h-full w-full"
+                >
+                  <TileLayer
+                    attribution="&copy; OpenStreetMap contributors"
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+
+                  {reports.map((report) => {
+                    if (
+                      !Number.isFinite(report.latitude) ||
+                      !Number.isFinite(report.longitude)
+                    ) {
+                      return null;
+                    }
+
+                    const position = [
+                      report.latitude,
+                      report.longitude,
+                    ];
+
+                    const coverage =
+                      Number(
+                        report.cvAssessment?.flood_coverage_pct
+                      ) || 0;
+
+                    const radius = Math.max(
+                      300,
+                      Math.min(3000, coverage * 30)
+                    );
+
+                    return (
+                      <div key={report.id}>
+                        <Marker position={position}>
+                          <Popup>
+                            <b>
+                              Incident #{report.id}
+                            </b>
+
+                            <br />
+
+                            Severity:{" "}
+                            {report.cvAssessment?.severity_level ||
+                              "N/A"}
+
+                            <br />
+
+                            Priority:{" "}
+                            {getPriority(report).toUpperCase()}
+
+                            <br />
+
+                            Flood Coverage: {coverage}%
+
+                            <br />
+
+                            Location: {report.location}
+                          </Popup>
+                        </Marker>
+
+                        {report.cvAssessment && (
+                          <Circle
+                            center={position}
+                            radius={radius}
+                            pathOptions={{
+                              fillOpacity: 0.15,
+                              weight: 1,
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </MapContainer>
+              </div>
+
+              <div className="mt-3 text-xs text-gray-600">
+                <b>{reports.length}</b> incident locations shown
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ALL INCIDENTS */}
+        <section className="mt-10">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h2 className="text-xl font-semibold">
+                All Incidents
+              </h2>
+
+              <p className="text-xs text-[#68736B] mt-1">
+                Every submitted disaster report remains saved.
+              </p>
+            </div>
+
+            <span className="text-xs text-[#68736B]">
+              Showing {filteredReports.length} of {reports.length}
+            </span>
+          </div>
+
+          {filteredReports.length === 0 ? (
+            <div className="p-8 text-center bg-white border border-[#DDE5DE] rounded-2xl">
+              <p className="text-sm text-[#68736B]">
+                No incidents found for this severity.
+              </p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
+              {filteredReports.map((report) => (
+                <IncidentCard
+                  key={report.id}
+                  report={report}
+                  getPriority={getPriority}
+                  onView={openIncident}
+                  compact
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* LAST UPDATED */}
+        <div className="flex justify-end items-center gap-2 text-xs text-gray-700 mt-6">
+          <Clock className="w-3.5 h-3.5" />
+          Dashboard updates automatically
+        </div>
+      </main>
+
+      {latest && <ResponderChatbot report={latest} />}
+    </div>
+  );
+}
+
+function IncidentCard({
+  report,
+  getPriority,
+  onView,
+  compact = false,
+}) {
+  const ai = report.aiAssessment;
+  const cv = report.cvAssessment;
+
+  const priority = getPriority(report);
 
   const priorityStyle =
     priority === "high"
@@ -48,399 +487,117 @@ function IncidentDetails() {
       ? "bg-[#F59E0B]"
       : "bg-[#2F7D4A]";
 
-  const evidenceAssessment = report.evidenceAssessment;
-
-  const reliability =
-    evidenceAssessment?.reliability?.toLowerCase() || "unknown";
-
-  const reliabilityStyle =
-    reliability === "high"
-      ? "text-[#2F7D4A]"
-      : reliability === "moderate"
-      ? "text-[#D97706]"
-      : reliability === "low"
-      ? "text-[#DC2626]"
-      : "text-[#68736B]";
-
-  const humanVerificationRequired =
-    evidenceAssessment?.human_verification_required ||
-    report.aiAssessment?.needs_human_verification;
+  const reportTime = report.created_at
+    ? new Date(report.created_at).toLocaleString("en-IN")
+    : "Time unavailable";
 
   return (
-    <div className="min-h-screen bg-[#F7F8F5] text-[#17201A]">
-      <Navbar />
+    <div className="p-5 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm">
 
-      <main className="max-w-5xl mx-auto px-6 py-10">
-
-        {/* BACK */}
-        <button
-          onClick={() => navigate("/dashboard")}
-          className="flex items-center gap-2 text-sm text-[#68736B] hover:text-[#2F7D4A]"
+      <div className="flex justify-between items-start gap-3">
+        <span
+          className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-[10px] font-bold ${priorityStyle}`}
         >
-          <ArrowLeft className="w-4 h-4" />
-          Back to dashboard
-        </button>
+          <span className="w-1.5 h-1.5 rounded-full bg-white" />
+          {priority.toUpperCase()} PRIORITY
+        </span>
 
-        {/* HEADER */}
-        <div className="mt-8">
-          <p className="text-xs tracking-[0.25em] text-[#2F7D4A] font-semibold">
-            INCIDENT DETAILS
+        <span className="text-xs text-[#68736B]">
+          #{report.id}
+        </span>
+      </div>
+
+      <h3 className="text-lg font-semibold mt-4">
+        {ai?.disaster_type || "Possible Incident"}
+      </h3>
+
+      <div className="flex items-center gap-2 text-xs text-[#68736B] mt-3">
+        <MapPin className="w-3.5 h-3.5" />
+        {report.location}
+      </div>
+
+      <div className="flex items-center gap-2 text-xs text-[#68736B] mt-2">
+        <Clock className="w-3.5 h-3.5" />
+        {reportTime}
+      </div>
+
+      {!compact && report.description && (
+        <p className="text-sm text-[#68736B] mt-3">
+          {report.description}
+        </p>
+      )}
+
+      {/* AI */}
+      {ai && (
+        <div className="mt-4 p-3 rounded-xl bg-[#F3F7F3] border border-[#DDE5DE]">
+          <p className="text-[10px] font-semibold text-[#2F7D4A]">
+            GEMINI AI
           </p>
 
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mt-3">
-            <h1 className="text-4xl font-bold">
-              {report.aiAssessment?.disaster_type ||
-                "Possible Incident"}
-            </h1>
+          <p className="text-xs text-[#68736B] mt-1">
+            Likelihood:{" "}
+            <b>{ai.likelihood || "N/A"}</b>
+          </p>
 
-            <span
-              className={`inline-flex w-fit px-4 py-2 rounded-full text-white text-xs font-bold ${priorityStyle}`}
-            >
-              {priority.toUpperCase()} PRIORITY
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 text-sm text-[#68736B] mt-4">
-            <MapPin className="w-4 h-4" />
-            {report.location || "Location unavailable"}
-          </div>
-        </div>
-
-        {/* HUMAN VERIFICATION STATUS */}
-        <div
-          className={`mt-6 p-6 rounded-2xl border shadow-sm ${
-            humanVerificationRequired
-              ? "bg-amber-50 border-amber-200"
-              : "bg-[#EAF4EC] border-[#BFDAC5]"
-          }`}
-        >
-          <div className="flex items-start gap-4">
-            <div
-              className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                humanVerificationRequired
-                  ? "bg-amber-100"
-                  : "bg-white"
-              }`}
-            >
-              {humanVerificationRequired ? (
-                <AlertTriangle className="w-5 h-5 text-amber-600" />
-              ) : (
-                <CheckCircle className="w-5 h-5 text-[#2F7D4A]" />
-              )}
-            </div>
-
-            <div>
-              <p className="text-xs font-semibold tracking-wide">
-                VERIFICATION STATUS
-              </p>
-
-              <h2
-                className={`text-lg font-semibold mt-1 ${
-                  humanVerificationRequired
-                    ? "text-amber-700"
-                    : "text-[#2F7D4A]"
-                }`}
-              >
-                {humanVerificationRequired
-                  ? "Human Verification Required"
-                  : "No Human Verification Required"}
-              </h2>
-
-              <p className="text-sm mt-2 text-[#68736B]">
-                {humanVerificationRequired
-                  ? "AI-generated assessment or evidence cross-check requires responder review before action."
-                  : "Available AI and evidence checks do not currently require additional human verification."}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* AI ASSESSMENT */}
-        <div className="mt-6 p-6 rounded-2xl bg-white border border-[#DDE5DE] shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#EAF4EC] flex items-center justify-center">
-              <ShieldAlert className="w-5 h-5 text-[#2F7D4A]" />
-            </div>
-
-            <div>
-              <h2 className="font-semibold">AI Assessment</h2>
-              <p className="text-xs text-[#68736B]">
-                Automated disaster analysis
-              </p>
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-4 mt-6">
-            <div className="p-4 rounded-xl bg-[#F7F8F5]">
-              <p className="text-xs text-[#68736B]">
-                Disaster Type
-              </p>
-              <p className="font-semibold mt-1 capitalize">
-                {report.aiAssessment?.disaster_type ||
-                  "Unknown"}
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-[#F7F8F5]">
-              <p className="text-xs text-[#68736B]">
-                AI Likelihood
-              </p>
-              <p className="font-semibold mt-1 capitalize">
-                {report.aiAssessment?.likelihood ||
-                  "Unknown"}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5">
-            <p className="text-xs text-[#68736B]">
-              AI Reasoning
+          {ai.needs_human_verification && (
+            <p className="text-[10px] text-amber-600 font-semibold mt-2">
+              Human verification required
             </p>
-
-            <p className="text-sm leading-relaxed mt-2">
-              {report.aiAssessment?.reason ||
-                "No AI assessment available."}
-            </p>
-          </div>
+          )}
         </div>
+      )}
 
-        {/* EVIDENCE RELIABILITY */}
-        {evidenceAssessment && (
-          <div className="mt-6 p-6 rounded-2xl bg-white border border-[#DDE5DE] shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#EAF4EC] flex items-center justify-center">
-                <ShieldAlert className="w-5 h-5 text-[#2F7D4A]" />
-              </div>
+      {/* CVDL */}
+      {cv && (
+        <div className="mt-3 p-3 rounded-xl bg-[#F3F7F3] border border-[#DDE5DE]">
+          <p className="text-[10px] font-semibold text-[#2F7D4A]">
+            CVDL FLOOD ANALYSIS
+          </p>
 
-              <div>
-                <h2 className="font-semibold">
-                  Evidence Reliability
-                </h2>
+          <p className="text-xs text-[#68736B] mt-1">
+            Severity: <b>{cv.severity_level}</b>
+          </p>
 
-                <p className="text-xs text-[#68736B]">
-                  Cross-check between independent AI evidence sources
-                </p>
-              </div>
-            </div>
+          <p className="text-xs text-[#68736B] mt-1">
+            Flood Coverage:{" "}
+            <b>{cv.flood_coverage_pct}%</b>
+          </p>
+        </div>
+      )}
 
-            <div className="grid md:grid-cols-3 gap-4 mt-6">
-
-              {/* AGREEMENT */}
-              <div className="p-4 rounded-xl bg-[#F7F8F5]">
-                <p className="text-xs text-[#68736B]">
-                  Evidence Agreement
-                </p>
-
-                <div className="flex items-center gap-2 mt-2">
-                  {evidenceAssessment.agreement ? (
-                    <>
-                      <CheckCircle className="w-5 h-5 text-[#2F7D4A]" />
-                      <span className="font-semibold text-[#2F7D4A]">
-                        Consistent
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="w-5 h-5 text-[#DC2626]" />
-                      <span className="font-semibold text-[#DC2626]">
-                        Conflicting
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* RELIABILITY */}
-              <div className="p-4 rounded-xl bg-[#F7F8F5]">
-                <p className="text-xs text-[#68736B]">
-                  Reliability
-                </p>
-
-                <p
-                  className={`font-semibold mt-2 capitalize ${reliabilityStyle}`}
-                >
-                  {reliability}
-                </p>
-              </div>
-
-              {/* CONTRADICTION */}
-              <div className="p-4 rounded-xl bg-[#F7F8F5]">
-                <p className="text-xs text-[#68736B]">
-                  Contradiction
-                </p>
-
-                <p
-                  className={`font-semibold mt-2 ${
-                    evidenceAssessment.contradiction
-                      ? "text-[#DC2626]"
-                      : "text-[#2F7D4A]"
-                  }`}
-                >
-                  {evidenceAssessment.contradiction
-                    ? "Detected"
-                    : "None detected"}
-                </p>
-              </div>
-            </div>
-
-            {/* REASON */}
-            {evidenceAssessment.reason && (
-              <div className="mt-5">
-                <p className="text-xs text-[#68736B]">
-                  Cross-Check Result
-                </p>
-
-                <p className="text-sm leading-relaxed mt-2">
-                  {evidenceAssessment.reason}
-                </p>
-              </div>
-            )}
-          </div>
+      {/* EVIDENCE */}
+      <div className="flex gap-2 mt-4 flex-wrap">
+        {report.evidence?.image && (
+          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
+            <Image className="w-3 h-3" />
+            Image
+          </span>
         )}
 
-        {/* DESCRIPTION */}
-        <div className="mt-6 p-6 rounded-2xl bg-white border border-[#DDE5DE] shadow-sm">
-          <h2 className="font-semibold">
-            Reporter Description
-          </h2>
-
-          <p className="text-sm text-[#68736B] mt-3 leading-relaxed">
-            {report.description ||
-              "No description provided."}
-          </p>
-        </div>
-
-        {/* EVIDENCE */}
-        <div className="mt-6">
-          <h2 className="font-semibold">
-            Submitted Evidence
-          </h2>
-
-          <div className="grid md:grid-cols-3 gap-4 mt-4">
-
-            {/* IMAGE */}
-            {report?.evidence?.image && (
-              <div className="p-5 rounded-2xl bg-white border border-[#DDE5DE]">
-                <p className="text-sm font-semibold mb-3">
-                  Image Evidence
-                </p>
-
-                <img
-                  src={report.evidence.image}
-                  alt="Incident evidence"
-                  className="w-full rounded-xl border border-[#DDE5DE]"
-                />
-              </div>
-            )}
-
-            {/* VIDEO */}
-            {report.evidence?.video && (
-              <div className="p-5 rounded-2xl bg-white border border-[#DDE5DE]">
-                <Video className="w-6 h-6 text-[#2F7D4A]" />
-
-                <p className="font-semibold mt-4">
-                  Video Evidence
-                </p>
-
-                <video
-                  src={`http://127.0.0.1:8000${report.evidence.video}`}
-                  controls
-                  className="w-full mt-3 rounded-xl"
-                />
-              </div>
-            )}
-
-            {/* AUDIO */}
-            {report.evidence?.audio && (
-              <div className="p-5 rounded-2xl bg-white border border-[#DDE5DE]">
-                <Mic className="w-6 h-6 text-[#2F7D4A]" />
-
-                <p className="font-semibold mt-4">
-                  Audio Evidence
-                </p>
-
-                <audio
-                  src={`http://127.0.0.1:8000${report.evidence.audio}`}
-                  controls
-                  className="w-full mt-3"
-                />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* CVDL */}
-        {report.cvAssessment && (
-          <div className="mt-6 p-6 rounded-2xl bg-white border border-[#DDE5DE] shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#EAF4EC] flex items-center justify-center">
-                <ShieldAlert className="w-5 h-5 text-[#2F7D4A]" />
-              </div>
-
-              <div>
-                <h2 className="font-semibold">
-                  CVDL Flood Analysis
-                </h2>
-
-                <p className="text-xs text-[#68736B]">
-                  Computer vision based flood assessment
-                </p>
-              </div>
-            </div>
-
-            <div className="grid md:grid-cols-3 gap-4 mt-6">
-              <div className="p-4 rounded-xl bg-[#F7F8F5]">
-                <p className="text-xs text-[#68736B]">
-                  Severity
-                </p>
-
-                <p className="font-semibold mt-1 capitalize">
-                  {report.cvAssessment.severity_level ||
-                    "Unknown"}
-                </p>
-              </div>
-
-              <div className="p-4 rounded-xl bg-[#F7F8F5]">
-                <p className="text-xs text-[#68736B]">
-                  Flood Coverage
-                </p>
-
-                <p className="font-semibold mt-1">
-                  {report.cvAssessment.flood_coverage_pct ??
-                    0}
-                  %
-                </p>
-              </div>
-
-              <div className="p-4 rounded-xl bg-[#F7F8F5]">
-                <p className="text-xs text-[#68736B]">
-                  Severity Score
-                </p>
-
-                <p className="font-semibold mt-1">
-                  {report.cvAssessment.severity_score ??
-                    0}
-                  /100
-                </p>
-              </div>
-            </div>
-          </div>
+        {report.evidence?.video && (
+          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
+            <Video className="w-3 h-3" />
+            Video
+          </span>
         )}
 
-        {/* STATUS */}
-        <div className="mt-8 p-5 rounded-2xl bg-[#EAF4EC] border border-[#BFDAC5]">
-          <p className="text-xs text-[#68736B]">
-            CURRENT STATUS
-          </p>
+        {report.evidence?.audio && (
+          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
+            <Mic className="w-3 h-3" />
+            Audio
+          </span>
+        )}
+      </div>
 
-          <p className="text-sm font-semibold text-[#2F7D4A] mt-1">
-            {report.status ||
-              "AWAITING_VERIFICATION"}
-          </p>
-        </div>
-      </main>
+      <button
+        onClick={() => onView(report)}
+        className="w-full flex justify-between mt-5 px-4 py-3 rounded-xl bg-[#2F7D4A] text-white text-sm font-semibold"
+      >
+        View Incident
+        <ArrowRight className="w-4 h-4" />
+      </button>
     </div>
   );
 }
 
-export default IncidentDetails;
+export default Dashboard;

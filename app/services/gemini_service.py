@@ -14,7 +14,6 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODEL = "gemini-3.5-flash"
 
-
 def analyze_image(image_bytes: bytes, description: str = ""):
     try:
         image = Image.open(io.BytesIO(image_bytes))
@@ -56,10 +55,19 @@ Do not claim the disaster is officially confirmed.
 
         return response.parsed
 
-    except errors.ClientError as e:
-        print("GEMINI ERROR:", e)
-        raise
+    except errors.ServerError as e:
+        print("GEMINI SERVER ERROR:", e)
+        return {
+            "disaster_type": "Unavailable",
+            "likelihood": "Unavailable",
+            "priority": "Pending",
+            "reason": "Gemini AI is temporarily unavailable. Please retry the assessment.",
+            "needs_human_verification": True,
+        }
 
+    except errors.ClientError as e:
+        print("GEMINI CLIENT ERROR:", e)
+        raise
 
 def cross_check_evidence(gemini, cvdl):
     """

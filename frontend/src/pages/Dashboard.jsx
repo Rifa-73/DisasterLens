@@ -1,5 +1,5 @@
-import Navbar from "../components/Navbar";
-import ResponderChatbot from "../components/ResponderChatbot";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import {
   MapContainer,
@@ -8,6 +8,7 @@ import {
   Circle,
   Popup,
 } from "react-leaflet";
+
 import "leaflet/dist/leaflet.css";
 
 import {
@@ -19,52 +20,91 @@ import {
   Video,
   Mic,
   ArrowRight,
-  CheckCircle,
 } from "lucide-react";
 
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import Navbar from "../components/Navbar";
+import ResponderChatbot from "../components/ResponderChatbot";
+
+const API = "http://localhost:8000";
 
 function Dashboard() {
   const navigate = useNavigate();
 
-  const [report, setReport] = useState(null);
+  const [reports, setReports] = useState([]);
+  const [filter, setFilter] = useState("all");
   const [notificationOpen, setNotificationOpen] = useState(false);
 
-  const [lastSeenId, setLastSeenId] = useState(
-    Number(localStorage.getItem("lastSeenIncidentId") || 0)
-  );
-
+  // Fetch only incidents submitted through the current UI
   useEffect(() => {
     const fetchIncidents = async () => {
       try {
-        const res = await fetch("http://localhost:8000/incidents/");
-        const data = await res.json();
+        const response = await fetch(`${API}/incidents/`);
 
-        if (!data.length) return;
+        if (!response.ok) {
+          throw new Error("Failed to fetch incidents");
+        }
 
-        const latest = data.reduce((a, b) =>
-          Number(a.id) > Number(b.id) ? a : b
-        );
+        const data = await response.json();
 
-        setReport({
-          id: latest.id,
-          latitude: Number(latest.latitude),
-          longitude: Number(latest.longitude),
-          location: `${latest.latitude}, ${latest.longitude}`,
-          description: latest.description,
-          aiAssessment: latest.ai_assessment,
-          cvAssessment: latest.severity,
-          evidenceAssessment: latest.evidence_assessment,
+        const visibleIds = JSON.parse(
+          localStorage.getItem("visibleIncidentIds") || "[]"
+        ).map(Number);
 
-          evidence: {
-            image: latest.image_url,
-            video: latest.video_url,
-            audio: latest.audio_url,
-          },
-        });
+        const newReports = data
+          .filter((item) => visibleIds.includes(Number(item.id)))
+          .sort((a, b) => Number(b.id) - Number(a.id))
+          .map((item) => ({
+            id: item.id,
+            latitude: Number(item.latitude),
+            longitude: Number(item.longitude),
+
+            location: `${item.latitude}, ${item.longitude}`,
+
+            description: item.description,
+            created_at: item.created_at,
+
+            aiAssessment: item.ai_assessment || null,
+            cvAssessment: item.severity || null,
+
+            evidence: {
+              image: item.image_url || null,
+              video: item.video_url || null,
+              audio: item.audio_url || null,
+            },
+          }));
+
+        // Restore locally saved image for latest report
+        const saved = localStorage.getItem("rnrReport");
+
+        if (saved) {
+          try {
+            const localReport = JSON.parse(saved);
+
+            setReports(
+              newReports.map((item) =>
+                Number(item.id) === Number(localReport.id)
+                  ? {
+                      ...item,
+                      evidence: {
+                        ...item.evidence,
+                        image:
+                          localReport.evidence?.image ||
+                          item.evidence.image,
+                      },
+                    }
+                  : item
+              )
+            );
+
+            return;
+          } catch {
+            // Ignore invalid localStorage data
+          }
+        }
+
+        setReports(newReports);
       } catch (error) {
-        console.error("Failed to fetch incidents:", error);
+        console.error("Dashboard error:", error);
       }
     };
 
@@ -75,50 +115,87 @@ function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  const location =
-    Number.isFinite(report?.latitude) &&
-    Number.isFinite(report?.longitude)
-      ? [report.latitude, report.longitude]
-      : report?.location
-      ? report.location.split(",").map(Number)
-      : [28.6139, 77.209];
+  const getPriority = (report) => {
+    const aiPriority =
+      report?.aiAssessment?.priority?.toLowerCase();
 
-  const ai = report?.aiAssessment;
-  const cv = report?.cvAssessment;
-  const evidence = report?.evidenceAssessment;
+    if (["high", "medium", "low"].includes(aiPriority)) {
+      return aiPriority;
+    }
 
-  const aiPriority = ai?.priority?.toLowerCase();
+    const severity =
+      report?.cvAssessment?.severity_level?.toLowerCase();
 
-  const priority = ["high", "medium", "low"].includes(aiPriority)
-    ? aiPriority
-    : cv?.severity_level === "severe"
-    ? "high"
-    : cv?.severity_level === "moderate"
-    ? "medium"
-    : cv?.severity_level === "low"
-    ? "low"
-    : "unknown";
+    if (severity === "severe") return "high";
+    if (severity === "moderate") return "medium";
+    if (severity === "low") return "low";
 
-  const priorityCount = {
-    high: priority === "high" ? 1 : 0,
-    medium: priority === "medium" ? 1 : 0,
-    low: priority === "low" ? 1 : 0,
+    return "unknown";
   };
 
-  const timeline = [
-    ["Report Received", true],
-    ["Gemini Analysis", !!ai],
-    ["CVDL Analysis", !!cv],
-    ["Evidence Cross-Check", !!evidence],
-    ["Human Verification", evidence?.human_verification_required],
-  ];
+  const filteredReports = useMemo(() => {
+    if (filter === "all") return reports;
 
-  const floodCoverage = Number(cv?.flood_coverage_pct) || 0;
+    return reports.filter((report) => {
+      const severity =
+        report.cvAssessment?.severity_level?.toLowerCase();
 
-  const affectedRadius = Math.max(
-    300,
-    Math.min(3000, floodCoverage * 30)
-  );
+      return severity === filter;
+    });
+  }, [reports, filter]);
+
+  const latest = filteredReports[0] || null;
+
+  const counts = {
+    high: reports.filter((r) => getPriority(r) === "high").length,
+    medium: reports.filter((r) => getPriority(r) === "medium").length,
+    low: reports.filter((r) => getPriority(r) === "low").length,
+  };
+
+  const openIncident = (incident) => {
+    localStorage.setItem(
+      "rnrReport",
+      JSON.stringify({
+        id: incident.id,
+        incidentId: incident.id,
+
+        latitude: incident.latitude,
+        longitude: incident.longitude,
+
+        location: incident.location,
+        description: incident.description,
+        created_at: incident.created_at,
+
+        evidence: {
+          image: incident.evidence?.image || null,
+          video: incident.evidence?.video || null,
+          audio: incident.evidence?.audio || null,
+        },
+
+        status: "ASSESSED",
+
+        aiAssessment: incident.aiAssessment || null,
+        cvAssessment: incident.cvAssessment || null,
+      })
+    );
+
+    navigate("/incident");
+  };
+
+  const getMapLocation = (report) => {
+    if (
+      Number.isFinite(report?.latitude) &&
+      Number.isFinite(report?.longitude)
+    ) {
+      return [report.latitude, report.longitude];
+    }
+
+    return [28.6139, 77.209];
+  };
+
+  const mapCenter = latest
+    ? getMapLocation(latest)
+    : [28.6139, 77.209];
 
   return (
     <div className="min-h-screen bg-[#F7F8F5] text-[#17201A]">
@@ -138,347 +215,413 @@ function Dashboard() {
             </h1>
 
             <p className="text-[#68736B] mt-3">
-              Monitor and prioritize incoming disaster incidents.
+              Monitor newly submitted disaster incidents.
             </p>
           </div>
 
           <div className="flex items-center gap-2 px-4 py-2 rounded-full border border-[#BFDAC5] bg-[#EAF4EC]">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+
             <span className="text-xs text-[#2F7D4A] font-medium">
               SYSTEM LIVE
             </span>
           </div>
         </div>
 
-        {/* STATS */}
-        <div className="grid md:grid-cols-4 gap-4 mt-10">
-          {[
-            ["High Priority", priorityCount.high, "Immediate attention"],
-            ["Medium Priority", priorityCount.medium, "Requires monitoring"],
-            ["Low Priority", priorityCount.low, "Low urgency"],
-            ["Active Incidents", report ? 1 : 0, "Across monitored areas"],
-          ].map(([title, count, text]) => (
-            <div
-              key={title}
-              className="p-5 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm"
+        {/* FILTER */}
+        <div className="flex items-center gap-2 mt-8">
+          <span className="text-xs font-medium">
+            Severity:
+          </span>
+
+          {["all", "low", "moderate", "severe"].map((item) => (
+            <button
+              key={item}
+              onClick={() => setFilter(item)}
+              className={`px-3 py-1.5 rounded-lg text-xs capitalize border ${
+                filter === item
+                  ? "bg-[#2F7D4A] text-white border-[#2F7D4A]"
+                  : "bg-white border-[#DDE5DE] text-[#68736B]"
+              }`}
             >
-              <p className="text-sm text-[#68736B]">{title}</p>
-
-              <p className="text-3xl font-bold mt-2">{count}</p>
-
-              <p className="text-xs text-[#68736B] mt-2">{text}</p>
-            </div>
+              {item}
+            </button>
           ))}
         </div>
 
-        {/* MAIN */}
-        <div className="grid lg:grid-cols-5 gap-6 mt-8">
+        {/* STATS */}
+        <div className="grid md:grid-cols-4 gap-4 mt-6">
+          <Stat
+            title="High Priority"
+            value={counts.high}
+            text="Immediate attention"
+          />
 
-          {/* INCIDENT */}
-          <div className="lg:col-span-2">
-            <div className="flex justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold">
-                  Incoming Incident
-                </h2>
+          <Stat
+            title="Medium Priority"
+            value={counts.medium}
+            text="Requires monitoring"
+          />
 
-                <p className="text-xs text-gray-600 mt-1">
-                  Latest report requiring attention
-                </p>
-              </div>
+          <Stat
+            title="Low Priority"
+            value={counts.low}
+            text="Low urgency"
+          />
 
-              <div className="relative">
+          <Stat
+            title="Total Incidents"
+            value={reports.length}
+            text="New incidents"
+          />
+        </div>
+
+        {/* LATEST + MAP */}
+        {latest && (
+          <div className="grid lg:grid-cols-5 gap-6 mt-8">
+
+            {/* LATEST INCIDENT */}
+            <div className="lg:col-span-2">
+              <div className="flex justify-between mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    Latest Incident
+                  </h2>
+
+                  <p className="text-xs text-gray-600 mt-1">
+                    Most recently submitted report
+                  </p>
+                </div>
+
                 <button
-                  onClick={() => {
-                    setNotificationOpen(!notificationOpen);
-
-                    if (report) {
-                      localStorage.setItem(
-                        "lastSeenIncidentId",
-                        report.id
-                      );
-
-                      setLastSeenId(report.id);
-                    }
-                  }}
+                  onClick={() =>
+                    setNotificationOpen(!notificationOpen)
+                  }
+                  className="relative"
                 >
                   <Bell className="w-5 h-5 text-gray-500" />
 
-                  {report && report.id > lastSeenId && (
-                    <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-red-500 border-2 border-[#EAF4EC]" />
-                  )}
+                  <span className="absolute top-0 right-0 w-2.5 h-2.5 rounded-full bg-red-500" />
                 </button>
 
-                {notificationOpen && report && (
-                  <div className="absolute right-0 top-12 z-50 w-72 p-4 bg-white border border-[#DDE5DE] rounded-2xl shadow-xl">
-                    <div className="flex items-start gap-3">
-                      <div className="p-2 rounded-xl bg-[#FDECEC]">
-                        <AlertTriangle className="w-5 h-5 text-red-500" />
-                      </div>
+                {notificationOpen && (
+                  <div className="absolute mt-8 z-50 p-4 bg-white border rounded-xl shadow-lg">
+                    <p className="text-sm font-semibold">
+                      New Incident
+                    </p>
 
-                      <div>
-                        <p className="font-semibold text-sm">
-                          New Incident
-                        </p>
-
-                        <p className="text-xs text-[#68736B] mt-1">
-                          A new disaster report has been submitted.
-                        </p>
-                      </div>
-                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      A new disaster report has been submitted.
+                    </p>
                   </div>
                 )}
               </div>
+
+              <IncidentCard
+                report={latest}
+                priority={getPriority(latest)}
+                onView={() => openIncident(latest)}
+              />
             </div>
 
-            <div className="p-5 rounded-2xl border border-red-200 bg-white shadow-sm">
+            {/* MAP */}
+            <div className="lg:col-span-3">
+              <div className="flex justify-between mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    Live Incident Map
+                  </h2>
 
-              {/* PRIORITY */}
-              <span
-                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-[11px] font-bold ${
-                  priority === "high"
-                    ? "bg-[#DC2626]"
-                    : priority === "medium"
-                    ? "bg-[#F59E0B]"
-                    : "bg-[#2F7D4A]"
-                }`}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-white" />
-                {priority.toUpperCase()} PRIORITY
-              </span>
-
-              <h3 className="text-xl font-semibold mt-4">
-                {ai?.disaster_type || "Possible Incident"}
-              </h3>
-
-              <div className="flex items-center gap-2 text-sm text-[#68736B] mt-3">
-                <MapPin className="w-4 h-4" />
-                {report?.location || "Location unavailable"}
-              </div>
-
-              <div className="flex items-start gap-2 text-sm text-[#68736B] mt-2">
-                <AlertTriangle className="w-4 h-4 mt-0.5" />
-
-                {report?.description || "No description provided."}
-              </div>
-
-              {/* GEMINI */}
-              <div className="mt-4 p-4 rounded-xl bg-[#F3F7F3] border border-[#DDE5DE]">
-                <p className="text-xs font-semibold text-[#2F7D4A]">
-                  GEMINI AI ASSESSMENT
-                </p>
-
-                <p className="text-sm text-[#68736B] mt-2">
-                  Likelihood:{" "}
-                  <b>{ai?.likelihood || "N/A"}</b>
-                </p>
-
-                <p className="text-sm text-[#68736B] mt-2 leading-relaxed">
-                  {ai?.reason || "No AI assessment available."}
-                </p>
-
-                {ai?.needs_human_verification && (
-                  <p className="text-xs text-amber-600 font-semibold mt-3">
-                    ⚠ Human verification required
-                  </p>
-                )}
-              </div>
-
-              {/* CVDL */}
-              {cv && (
-                <div className="mt-3 p-4 rounded-xl bg-[#F3F7F3] border border-[#DDE5DE]">
-                  <p className="text-xs font-semibold text-[#2F7D4A]">
-                    CVDL FLOOD ANALYSIS
-                  </p>
-
-                  <p className="text-sm text-[#68736B] mt-2">
-                    Severity: <b>{cv.severity_level}</b>
-                  </p>
-
-                  <p className="text-sm text-[#68736B] mt-1">
-                    Flood Coverage:{" "}
-                    <b>{cv.flood_coverage_pct}%</b>
-                  </p>
-
-                  <p className="text-sm text-[#68736B] mt-1">
-                    Severity Score:{" "}
-                    <b>{cv.severity_score}/100</b>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Locations of all new incidents
                   </p>
                 </div>
-              )}
 
-              {/* EVIDENCE */}
-              <div className="flex gap-2 mt-5 flex-wrap">
-                {report?.evidence?.image && (
-                  <button
-                    onClick={() => navigate("/incident")}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#F3F7F3] text-xs text-[#2F7D4A]"
-                  >
-                    <Image className="w-3.5 h-3.5" />
-                    Image
-                  </button>
-                )}
-
-                {report?.evidence?.video && (
-                  <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#F3F7F3] text-xs text-[#2F7D4A]">
-                    <Video className="w-3.5 h-3.5" />
-                    Video
-                  </span>
-                )}
-
-                {report?.evidence?.audio && (
-                  <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#F3F7F3] text-xs text-[#2F7D4A]">
-                    <Mic className="w-3.5 h-3.5" />
-                    Audio
-                  </span>
-                )}
+                <MapPin className="w-5 h-5 text-gray-500" />
               </div>
 
-              <button
-                onClick={() => navigate("/incident")}
-                className="w-full flex justify-between mt-6 px-4 py-3 rounded-xl bg-[#2F7D4A] text-white text-sm font-semibold"
-              >
-                View Incident
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          {/* LIVE MAP + AFFECTED AREA */}
-          <div className="lg:col-span-3">
-            <div className="flex justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold">
-                  Live Incident Map
-                </h2>
-
-                <p className="text-xs text-gray-600 mt-1">
-                  Incident location and estimated affected area
-                </p>
-              </div>
-
-              <MapPin className="w-5 h-5 text-gray-500" />
-            </div>
-
-            <div className="h-[520px] rounded-2xl overflow-hidden border border-[#DDE5DE] shadow-sm">
-              <MapContainer
-                center={location}
-                zoom={12}
-                scrollWheelZoom
-                className="h-full w-full"
-              >
-                <TileLayer
-                  attribution="&copy; OpenStreetMap contributors"
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-
-                <Marker position={location}>
-                  <Popup>
-                    <b>
-                      {ai?.disaster_type || "Possible Incident"}
-                    </b>
-
-                    <br />
-
-                    Priority: {priority.toUpperCase()}
-
-                    <br />
-
-                    Location: {report?.location || "Delhi"}
-
-                    <br />
-
-                    Flood Coverage: {floodCoverage}%
-
-                    <br />
-
-                    Severity: {cv?.severity_level || "N/A"}
-                  </Popup>
-                </Marker>
-
-                {report && cv && (
-                  <Circle
-                    center={location}
-                    radius={affectedRadius}
-                    pathOptions={{
-                      fillOpacity: 0.2,
-                      weight: 2,
-                    }}
-                  />
-                )}
-              </MapContainer>
-            </div>
-
-            {/* MAP INFO */}
-            {report && cv && (
-              <div className="mt-3 text-xs text-gray-600">
-                <b>Flood Coverage:</b> {floodCoverage}% &nbsp; • &nbsp;
-                <b>Severity:</b> {cv.severity_level || "N/A"}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* INCIDENT TIMELINE */}
-        {report && (
-          <div className="mt-8 p-6 rounded-2xl bg-white border border-[#DDE5DE] shadow-sm">
-
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">
-                  Incident Timeline
-                </h2>
-
-                <p className="text-xs text-[#68736B] mt-1">
-                  Evidence processing and verification flow
-                </p>
-              </div>
-
-              <Clock className="w-5 h-5 text-[#68736B]" />
-            </div>
-
-            <div className="flex flex-col md:flex-row md:items-center mt-6">
-              {timeline.map(([title, completed], index) => (
-                <div
-                  key={title}
-                  className="flex items-center flex-1"
+              <div className="h-[520px] rounded-2xl overflow-hidden border border-[#DDE5DE] shadow-sm">
+                <MapContainer
+                  center={mapCenter}
+                  zoom={11}
+                  scrollWheelZoom
+                  className="h-full w-full"
                 >
-                  <div className="flex items-center gap-2">
-                    <CheckCircle
-                      className={`w-5 h-5 ${
-                        completed
-                          ? "text-[#2F7D4A]"
-                          : "text-gray-300"
-                      }`}
-                    />
+                  <TileLayer
+                    attribution="&copy; OpenStreetMap contributors"
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
 
-                    <span
-                      className={`text-xs font-medium ${
-                        completed
-                          ? "text-[#17201A]"
-                          : "text-gray-400"
-                      }`}
-                    >
-                      {title}
-                    </span>
-                  </div>
+                  {filteredReports.map((report) => {
+                    const position = getMapLocation(report);
+                    const cv = report.cvAssessment;
 
-                  {index < timeline.length - 1 && (
-                    <div className="hidden md:block flex-1 h-px bg-[#DDE5DE] mx-3" />
-                  )}
-                </div>
-              ))}
+                    const coverage =
+                      Number(cv?.flood_coverage_pct) || 0;
+
+                    const radius = Math.max(
+                      300,
+                      Math.min(3000, coverage * 30)
+                    );
+
+                    return (
+                      <div key={report.id}>
+                        <Marker position={position}>
+                          <Popup>
+                            <b>
+                              {report.aiAssessment?.disaster_type ||
+                                "Possible Incident"}
+                            </b>
+
+                            <br />
+
+                            Incident #{report.id}
+
+                            <br />
+
+                            Priority:{" "}
+                            {getPriority(report).toUpperCase()}
+
+                            <br />
+
+                            Severity:{" "}
+                            {cv?.severity_level || "N/A"}
+
+                            <br />
+
+                            <button
+                              onClick={() => openIncident(report)}
+                              className="mt-2 text-[#2F7D4A] font-semibold"
+                            >
+                              View Incident →
+                            </button>
+                          </Popup>
+                        </Marker>
+
+                        {cv && (
+                          <Circle
+                            center={position}
+                            radius={radius}
+                            pathOptions={{
+                              fillOpacity: 0.15,
+                              weight: 2,
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </MapContainer>
+              </div>
+
+              <p className="text-xs text-gray-600 mt-2">
+                {filteredReports.length} incident location
+                {filteredReports.length !== 1 ? "s" : ""} shown
+              </p>
             </div>
           </div>
         )}
 
-        <div className="flex justify-end items-center gap-2 text-xs text-gray-700 mt-5">
+        {/* EMPTY STATE */}
+        {!latest && (
+          <div className="mt-8 p-10 text-center bg-white border border-[#DDE5DE] rounded-2xl">
+            <AlertTriangle className="w-8 h-8 mx-auto text-gray-400" />
+
+            <h2 className="font-semibold mt-3">
+              No new incidents
+            </h2>
+
+            <p className="text-sm text-gray-500 mt-1">
+              New submitted reports will appear here automatically.
+            </p>
+          </div>
+        )}
+
+        {/* ALL NEW INCIDENTS */}
+        {filteredReports.length > 0 && (
+          <section className="mt-10">
+            <div className="flex justify-between items-end mb-5">
+              <div>
+                <h2 className="text-lg font-semibold">
+                  All New Incidents
+                </h2>
+
+                <p className="text-xs text-[#68736B] mt-1">
+                  Newly submitted disaster reports remain saved.
+                </p>
+              </div>
+
+              <span className="text-xs text-[#68736B]">
+                Showing {filteredReports.length}
+              </span>
+            </div>
+
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredReports.map((incident) => (
+                <IncidentCard
+                  key={incident.id}
+                  report={incident}
+                  priority={getPriority(incident)}
+                  onView={() => openIncident(incident)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        <div className="flex justify-end items-center gap-2 text-xs text-gray-700 mt-6">
           <Clock className="w-3.5 h-3.5" />
-          Last updated just now
+          Dashboard updates automatically
         </div>
       </main>
 
-      <ResponderChatbot report={report} />
+      <ResponderChatbot report={latest} />
+    </div>
+  );
+}
+
+/* ---------------- COMPONENTS ---------------- */
+
+function Stat({ title, value, text }) {
+  return (
+    <div className="p-5 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm">
+      <p className="text-sm text-[#68736B]">
+        {title}
+      </p>
+
+      <p className="text-3xl font-bold mt-2">
+        {value}
+      </p>
+
+      <p className="text-xs text-[#68736B] mt-2">
+        {text}
+      </p>
+    </div>
+  );
+}
+
+function IncidentCard({ report, priority, onView }) {
+  const ai = report?.aiAssessment;
+  const cv = report?.cvAssessment;
+  const evidence = report?.evidence;
+
+  const priorityClass =
+    priority === "high"
+      ? "bg-[#DC2626]"
+      : priority === "medium"
+      ? "bg-[#F59E0B]"
+      : "bg-[#2F7D4A]";
+
+  const reportTime = report.created_at
+    ? new Date(report.created_at).toLocaleString("en-IN")
+    : "Time unavailable";
+
+  return (
+    <div className="p-5 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm">
+
+      {/* PRIORITY */}
+      <div className="flex justify-between items-center">
+        <span
+          className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-white text-[10px] font-bold ${priorityClass}`}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-white" />
+
+          {priority.toUpperCase()} PRIORITY
+        </span>
+
+        <span className="text-xs text-gray-400">
+          #{report.id}
+        </span>
+      </div>
+
+      {/* TITLE */}
+      <h3 className="text-lg font-semibold mt-4">
+        {ai?.disaster_type || "Possible Incident"}
+      </h3>
+
+      {/* LOCATION */}
+      <div className="flex items-center gap-2 text-xs text-[#68736B] mt-2">
+        <MapPin className="w-3.5 h-3.5" />
+
+        {report.location || "Location unavailable"}
+      </div>
+
+      {/* TIME */}
+      <div className="flex items-center gap-2 text-xs text-[#68736B] mt-2">
+        <Clock className="w-3.5 h-3.5" />
+
+        {reportTime}
+      </div>
+
+      {/* GEMINI */}
+      <div className="mt-4 p-3 rounded-xl bg-[#F3F7F3] border border-[#DDE5DE]">
+        <p className="text-[10px] font-semibold text-[#2F7D4A]">
+          GEMINI AI
+        </p>
+
+        <p className="text-xs text-[#68736B] mt-2">
+          Likelihood:{" "}
+          <b>{ai?.likelihood || "Unavailable"}</b>
+        </p>
+
+        {ai?.needs_human_verification && (
+          <p className="text-[10px] text-orange-500 font-semibold mt-2">
+            Human verification required
+          </p>
+        )}
+      </div>
+
+      {/* CVDL */}
+      {cv && (
+        <div className="mt-3 p-3 rounded-xl bg-[#F3F7F3] border border-[#DDE5DE]">
+          <p className="text-[10px] font-semibold text-[#2F7D4A]">
+            CVDL FLOOD ANALYSIS
+          </p>
+
+          <p className="text-xs text-[#68736B] mt-2">
+            Severity: <b>{cv.severity_level}</b>
+          </p>
+
+          <p className="text-xs text-[#68736B] mt-1">
+            Flood Coverage:{" "}
+            <b>{cv.flood_coverage_pct}%</b>
+          </p>
+        </div>
+      )}
+
+      {/* EVIDENCE */}
+      <div className="flex gap-2 mt-4 flex-wrap">
+        {evidence?.image && (
+          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
+            <Image className="w-3 h-3" />
+            Image
+          </span>
+        )}
+
+        {evidence?.video && (
+          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
+            <Video className="w-3 h-3" />
+            Video
+          </span>
+        )}
+
+        {evidence?.audio && (
+          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
+            <Mic className="w-3 h-3" />
+            Audio
+          </span>
+        )}
+      </div>
+
+      {/* VIEW */}
+      <button
+        onClick={onView}
+        className="w-full flex justify-between items-center mt-5 px-4 py-3 rounded-xl bg-[#2F7D4A] text-white text-xs font-semibold hover:bg-[#25663C]"
+      >
+        View Incident
+
+        <ArrowRight className="w-4 h-4" />
+      </button>
     </div>
   );
 }
