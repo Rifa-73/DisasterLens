@@ -5,14 +5,12 @@ from pydantic import BaseModel, Field
 
 
 class SeverityResult(BaseModel):
-    """What we return after running an uploaded image through the CV model."""
-    severity_level: str          # e.g. "low", "moderate", "severe"
-    flood_coverage_pct: float    # % of image classified as flooded, from U-Net mask
+    severity_level: str
+    flood_coverage_pct: float
     severity_score: float
 
 
 class GeminiAssessment(BaseModel):
-
     disaster_type: str
     likelihood: str
     priority: str
@@ -21,52 +19,48 @@ class GeminiAssessment(BaseModel):
 
 
 class IncidentCreate(BaseModel):
-    """What a client sends when reporting/creating an incident."""
-    # Real latitude/longitude ranges - anything outside this is not a real location.
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
-    # Cap description length so someone can't send a huge block of text.
     description: Optional[str] = Field(None, max_length=500)
 
 
 class BatchImageResult(BaseModel):
-    """One image's result within a batch assessment, ranked by severity."""
     filename: str
-    rank: int                    # 1 = worst flooding in the batch
+    rank: int
     severity: SeverityResult
 
 
 class BatchSeverityResponse(BaseModel):
-    """Response for assessing + ranking multiple images at once."""
     total_images: int
-    results: list[BatchImageResult]      # sorted worst-to-best
-    highest_severity: BatchImageResult   # convenience - same as results[0]
+    results: list[BatchImageResult]
+    highest_severity: BatchImageResult
 
 
 class VideoSeverityResult(BaseModel):
-    """Aggregated result of analyzing every frame of an uploaded video."""
     frames_analyzed: int
     fps: float
     average_flood_coverage_pct: float
     peak_flood_coverage_pct: float
-    peak_frame: int              # frame number where flooding was worst
-    peak_severity: str           # e.g. "High", "Medium", "Low", "None"
-    severity_level: str          # same low/moderate/severe scale as images
+    peak_frame: int
+    peak_severity: str
+    severity_level: str
     high_frames: int
     medium_frames: int
     low_frames: int
 
 
 class IncidentOut(BaseModel):
-    """What we return once an incident is stored + assessed."""
     id: int
     latitude: float
     longitude: float
     description: Optional[str] = None
+
     severity: SeverityResult
-    # URLs the frontend can use to play back the uploaded audio/video, if any.
+
+    image_urls: list[str] = []
+
     audio_url: Optional[str] = None
     video_url: Optional[str] = None
+
     ai_assessment: Optional[GeminiAssessment] = None
-    # When the incident was reported (UTC). Frontend converts to local time.
     created_at: Optional[datetime] = None

@@ -15,6 +15,14 @@ import { useState, useRef } from "react";
 
 const API = "http://127.0.0.1:8000";
 
+const fileToDataURL = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
 function ReportIncident() {
   const navigate = useNavigate();
 
@@ -27,22 +35,18 @@ function ReportIncident() {
   const [listening, setListening] = useState(false);
   const [loading, setLoading] = useState(false);
   const [analyzingImages, setAnalyzingImages] = useState(false);
+  const [analyzingVideo, setAnalyzingVideo] = useState(false);
 
   const [batchResult, setBatchResult] = useState(null);
+  const [videoResult, setVideoResult] = useState(null);
   const [submitted, setSubmitted] = useState(null);
 
   const recognitionRef = useRef(null);
 
-  /* ---------------- IMAGES ---------------- */
-
   const handleImages = (e) => {
     const selected = Array.from(e.target.files || []);
 
-    setImages((prev) => {
-      const combined = [...prev, ...selected];
-      return combined.slice(0, 10);
-    });
-
+    setImages((prev) => [...prev, ...selected].slice(0, 10));
     setBatchResult(null);
     e.target.value = "";
   };
@@ -51,8 +55,6 @@ function ReportIncident() {
     setImages((prev) => prev.filter((_, i) => i !== index));
     setBatchResult(null);
   };
-
-  /* ---------------- BATCH ANALYSIS ---------------- */
 
   const analyzeAllImages = async () => {
     if (!images.length) {
@@ -70,21 +72,16 @@ function ReportIncident() {
     });
 
     try {
-      const response = await fetch(
-        `${API}/incidents/assess-batch`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const response = await fetch(`${API}/incidents/assess-batch`, {
+        method: "POST",
+        body: formData,
+      });
 
       if (!response.ok) {
         throw new Error("Batch image analysis failed.");
       }
 
-      const result = await response.json();
-
-      setBatchResult(result);
+      setBatchResult(await response.json());
     } catch (error) {
       console.error(error);
       alert("Could not analyze the images.");
@@ -93,7 +90,36 @@ function ReportIncident() {
     }
   };
 
-  /* ---------------- LOCATION ---------------- */
+  const analyzeVideo = async () => {
+    if (!video) {
+      alert("Please upload a video first.");
+      return;
+    }
+
+    setAnalyzingVideo(true);
+    setVideoResult(null);
+
+    const formData = new FormData();
+    formData.append("video", video);
+
+    try {
+      const response = await fetch(`${API}/incidents/assess-video`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error("Video analysis failed.");
+      }
+
+      setVideoResult(await response.json());
+    } catch (error) {
+      console.error(error);
+      alert("Could not analyze the video.");
+    } finally {
+      setAnalyzingVideo(false);
+    }
+  };
 
   const detectLocation = () => {
     navigator.geolocation.getCurrentPosition(
@@ -107,8 +133,6 @@ function ReportIncident() {
         )
     );
   };
-
-  /* ---------------- SPEECH ---------------- */
 
   const toggleSpeech = () => {
     const SR =
@@ -143,17 +167,12 @@ function ReportIncident() {
 
     recognitionRef.current = recognition;
     recognition.start();
-
     setListening(true);
   };
 
-  /* ---------------- SUBMIT ---------------- */
-
   const handleSubmit = async () => {
     if (!images.length || !location || !location.includes(",")) {
-      alert(
-        "Please upload an image and detect your location."
-      );
+      alert("Please upload an image and detect your location.");
       return;
     }
 
@@ -169,28 +188,28 @@ function ReportIncident() {
     formData.append("longitude", longitude);
     formData.append("description", description);
 
-    // Backend /report currently accepts one image.
-    formData.append("file", images[0]);
+    images.forEach((image) => {
+      formData.append("files", image);
+    });
 
     if (video) formData.append("video", video);
     if (audio) formData.append("audio", audio);
 
     try {
-      const response = await fetch(
-        `${API}/incidents/report`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const response = await fetch(`${API}/incidents/report`, {
+        method: "POST",
+        body: formData,
+      });
 
       if (!response.ok) {
-        throw new Error("Report submission failed.");
+        const error = await response.json().catch(() => ({}));
+        throw new Error(
+          error.detail || "Report submission failed."
+        );
       }
 
       const result = await response.json();
 
-      /* Remember this new incident for Dashboard */
       const visibleIds = JSON.parse(
         localStorage.getItem("visibleIncidentIds") || "[]"
       );
@@ -202,59 +221,56 @@ function ReportIncident() {
         JSON.stringify([...new Set(visibleIds)])
       );
 
-      const reader = new FileReader();
+      const imageData = await Promise.all(
+        images.map(async (image) => ({
+          name: image.name,
+          data: await fileToDataURL(image),
+        }))
+      );
 
-      reader.onload = () => {
-        const report = {
-          id: result.id,
-          incidentId: result.id,
+      const report = {
+        id: result.id,
+        incidentId: result.id,
 
-          latitude: result.latitude,
-          longitude: result.longitude,
+        latitude: result.latitude,
+        longitude: result.longitude,
 
-          location,
-          description:
-            result.description || description,
+        location,
+        description: result.description || description,
+        created_at: result.created_at,
 
-          created_at: result.created_at,
+        evidence: {
+          image: imageData[0]?.data || null,
+          imageName: imageData[0]?.name || null,
+          images: imageData,
+          video: result.video_url || null,
+          audio: result.audio_url || null,
+        },
 
-          evidence: {
-            image: reader.result,
-            imageName: images[0].name,
-            video: result.video_url || null,
-            audio: result.audio_url || null,
-          },
+        status: "ASSESSED",
 
-          status: "ASSESSED",
+        aiAssessment: result.ai_assessment || null,
+        cvAssessment: result.severity || null,
 
-          aiAssessment:
-            result.ai_assessment || null,
-
-          cvAssessment:
-            result.severity || null,
-
-          // Keep batch analysis locally too
-          batchAnalysis: batchResult || null,
-        };
-
-        localStorage.setItem(
-          "rnrReport",
-          JSON.stringify(report)
-        );
-
-        setSubmitted(result.id);
+        batchAnalysis: batchResult || null,
+        videoAnalysis: videoResult || null,
       };
 
-      reader.readAsDataURL(images[0]);
+      localStorage.setItem(
+        "rnrReport",
+        JSON.stringify(report)
+      );
+
+      setSubmitted(result.id);
     } catch (error) {
       console.error(error);
-      alert("Could not analyze the report.");
+      alert(
+        error.message || "Could not analyze the report."
+      );
     } finally {
       setLoading(false);
     }
   };
-
-  /* ---------------- SUCCESS ---------------- */
 
   if (submitted) {
     return (
@@ -296,14 +312,11 @@ function ReportIncident() {
     );
   }
 
-  /* ---------------- MAIN UI ---------------- */
-
   return (
     <div className="min-h-screen bg-[#F7F8F5] text-[#17201A]">
       <Navbar />
 
       <main className="max-w-5xl mx-auto px-6 py-12">
-
         <button
           onClick={() => navigate("/")}
           className="flex items-center gap-2 text-sm text-[#68736B] hover:text-[#2F7D4A] mb-8"
@@ -339,8 +352,6 @@ function ReportIncident() {
           </p>
 
           <div className="grid md:grid-cols-3 gap-4 mt-5">
-
-            {/* IMAGES */}
             <label className="group p-6 rounded-2xl border border-[#DDE5DE] bg-white hover:border-[#2F7D4A] transition cursor-pointer">
               <Camera className="w-6 h-6 text-[#2F7D4A]" />
 
@@ -366,7 +377,6 @@ function ReportIncident() {
               />
             </label>
 
-            {/* VIDEO */}
             <label className="group p-6 rounded-2xl border border-[#DDE5DE] bg-white hover:border-[#2F7D4A] transition cursor-pointer">
               <Video className="w-6 h-6 text-[#2F7D4A]" />
 
@@ -387,19 +397,19 @@ function ReportIncident() {
                 type="file"
                 accept="video/*"
                 className="hidden"
-                onChange={(e) =>
-                  setVideo(e.target.files[0])
-                }
+                onChange={(e) => {
+                  setVideo(e.target.files[0]);
+                  setVideoResult(null);
+                }}
               />
 
               {video && (
-                <p className="text-xs text-[#2F7D4A] mt-2">
+                <p className="text-xs text-[#2F7D4A] mt-2 truncate">
                   {video.name}
                 </p>
               )}
             </label>
 
-            {/* AUDIO */}
             <label className="group p-6 rounded-2xl border border-[#DDE5DE] bg-white hover:border-[#2F7D4A] transition cursor-pointer">
               <Mic className="w-6 h-6 text-[#2F7D4A]" />
 
@@ -420,13 +430,11 @@ function ReportIncident() {
                 type="file"
                 accept="audio/*"
                 className="hidden"
-                onChange={(e) =>
-                  setAudio(e.target.files[0])
-                }
+                onChange={(e) => setAudio(e.target.files[0])}
               />
 
               {audio && (
-                <p className="text-xs text-[#2F7D4A] mt-2">
+                <p className="text-xs text-[#2F7D4A] mt-2 truncate">
                   {audio.name}
                 </p>
               )}
@@ -463,7 +471,6 @@ function ReportIncident() {
                 ))}
               </div>
 
-              {/* ANALYZE BUTTON */}
               <button
                 onClick={analyzeAllImages}
                 disabled={analyzingImages}
@@ -484,7 +491,7 @@ function ReportIncident() {
             </>
           )}
 
-          {/* BATCH RESULTS */}
+          {/* MULTI IMAGE RESULT */}
           {batchResult && (
             <div className="mt-6 p-5 rounded-2xl border border-[#DDE5DE] bg-white">
               <div className="flex justify-between items-center">
@@ -499,9 +506,8 @@ function ReportIncident() {
                 </div>
 
                 <span className="px-3 py-1 rounded-full bg-[#EAF4EC] text-[#2F7D4A] text-xs font-bold">
-                  {batchResult.highest_severity?.severity
-                    ?.severity_level
-                    ?.toUpperCase() || "N/A"}
+                  {batchResult.highest_severity?.severity?.severity_level?.toUpperCase() ||
+                    "N/A"}
                 </span>
               </div>
 
@@ -540,21 +546,96 @@ function ReportIncident() {
                 </p>
 
                 <p className="text-sm font-bold mt-1">
-                  {
-                    batchResult.highest_severity?.severity
-                      ?.severity_level
-                  }
+                  {batchResult.highest_severity?.severity?.severity_level}
                 </p>
 
                 <p className="text-xs text-[#68736B] mt-1">
                   Flood coverage:{" "}
-                  {
-                    batchResult.highest_severity?.severity
-                      ?.flood_coverage_pct
-                  }
+                  {batchResult.highest_severity?.severity?.flood_coverage_pct}
                   %
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* VIDEO ANALYSIS */}
+          {video && (
+            <div className="mt-6 p-5 rounded-2xl border border-[#DDE5DE] bg-white">
+              <div className="flex justify-between items-center gap-3">
+                <div>
+                  <h3 className="font-semibold">
+                    Video Flood Analysis
+                  </h3>
+
+                  <p className="text-xs text-[#68736B] mt-1">
+                    Frame-by-frame CVDL assessment
+                  </p>
+                </div>
+
+                {videoResult && (
+                  <span className="px-3 py-1 rounded-full bg-[#EAF4EC] text-[#2F7D4A] text-xs font-bold">
+                    {videoResult.severity_level?.toUpperCase() || "N/A"}
+                  </span>
+                )}
+              </div>
+
+              {!videoResult && (
+                <button
+                  onClick={analyzeVideo}
+                  disabled={analyzingVideo}
+                  className="mt-4 flex items-center gap-2 px-5 py-3 rounded-xl bg-[#17201A] text-white text-sm font-semibold hover:bg-black disabled:opacity-60"
+                >
+                  {analyzingVideo ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Analyzing Video...
+                    </>
+                  ) : (
+                    <>
+                      <Video className="w-4 h-4" />
+                      Analyze Video
+                    </>
+                  )}
+                </button>
+              )}
+
+              {videoResult && (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
+                    <Metric
+                      label="Frames"
+                      value={videoResult.frames_analyzed}
+                    />
+                    <Metric
+                      label="Avg Coverage"
+                      value={`${videoResult.average_flood_coverage_pct}%`}
+                    />
+                    <Metric
+                      label="Peak Coverage"
+                      value={`${videoResult.peak_flood_coverage_pct}%`}
+                    />
+                    <Metric
+                      label="Peak Frame"
+                      value={`#${videoResult.peak_frame}`}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 mt-3">
+                    <FrameStat
+                      label="HIGH"
+                      value={videoResult.high_frames}
+                    />
+                    <FrameStat
+                      label="MEDIUM"
+                      value={videoResult.medium_frames}
+                    />
+                    <FrameStat
+                      label="LOW"
+                      value={videoResult.low_frames}
+                    />
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -578,9 +659,7 @@ function ReportIncident() {
 
           <textarea
             value={description}
-            onChange={(e) =>
-              setDescription(e.target.value)
-            }
+            onChange={(e) => setDescription(e.target.value)}
             placeholder="For example: Water has risen above the road near..."
             className="w-full h-32 mt-3 rounded-2xl border border-[#DDE5DE] bg-white p-4 text-sm outline-none focus:border-[#2F7D4A] resize-none"
           />
@@ -626,9 +705,7 @@ function ReportIncident() {
             disabled={loading}
             className="flex items-center gap-3 px-7 py-3.5 rounded-xl bg-[#2F7D4A] text-white font-semibold hover:bg-[#25663C] disabled:opacity-60"
           >
-            {loading
-              ? "Submitting..."
-              : "Submit Report"}
+            {loading ? "Submitting..." : "Submit Report"}
 
             {!loading && (
               <ArrowLeft className="w-4 h-4 rotate-180" />
@@ -636,6 +713,32 @@ function ReportIncident() {
           </button>
         </div>
       </main>
+    </div>
+  );
+}
+
+function Metric({ label, value }) {
+  return (
+    <div className="p-3 rounded-xl bg-[#F3F7F3]">
+      <p className="text-[9px] font-bold text-[#7A867D]">
+        {label}
+      </p>
+      <p className="text-lg font-bold mt-1">
+        {value ?? "N/A"}
+      </p>
+    </div>
+  );
+}
+
+function FrameStat({ label, value }) {
+  return (
+    <div className="p-3 rounded-xl bg-[#F8F9F6] border border-[#E5EAE3] text-center">
+      <p className="text-[9px] font-bold text-[#7A867D]">
+        {label}
+      </p>
+      <p className="text-lg font-bold mt-1">
+        {value ?? 0}
+      </p>
     </div>
   );
 }

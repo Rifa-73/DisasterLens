@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-
 import {
   MapContainer,
   TileLayer,
@@ -8,19 +7,9 @@ import {
   Circle,
   Popup,
 } from "react-leaflet";
-
 import "leaflet/dist/leaflet.css";
 
-import {
-  Bell,
-  MapPin,
-  AlertTriangle,
-  Clock,
-  Image,
-  Video,
-  Mic,
-  ArrowRight,
-} from "lucide-react";
+import { AlertTriangle, Clock, ArrowRight } from "lucide-react";
 
 import Navbar from "../components/Navbar";
 import ResponderChatbot from "../components/ResponderChatbot";
@@ -32,17 +21,12 @@ function Dashboard() {
 
   const [reports, setReports] = useState([]);
   const [filter, setFilter] = useState("all");
-  const [notificationOpen, setNotificationOpen] = useState(false);
 
-  // Fetch only incidents submitted through the current UI
   useEffect(() => {
     const fetchIncidents = async () => {
       try {
         const response = await fetch(`${API}/incidents/`);
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch incidents");
-        }
+        if (!response.ok) throw new Error("Failed to fetch incidents");
 
         const data = await response.json();
 
@@ -53,27 +37,41 @@ function Dashboard() {
         const newReports = data
           .filter((item) => visibleIds.includes(Number(item.id)))
           .sort((a, b) => Number(b.id) - Number(a.id))
-          .map((item) => ({
-            id: item.id,
-            latitude: Number(item.latitude),
-            longitude: Number(item.longitude),
+          .map((item) => {
+            const imageUrls =
+              Array.isArray(item.image_urls)
+                ? item.image_urls
+                : Array.isArray(item.imageUrls)
+                ? item.imageUrls
+                : item.image_url
+                ? [item.image_url]
+                : [];
 
-            location: `${item.latitude}, ${item.longitude}`,
+            return {
+              id: item.id,
+              latitude: Number(item.latitude),
+              longitude: Number(item.longitude),
+              location: `${item.latitude}, ${item.longitude}`,
+              description: item.description,
+              created_at: item.created_at,
 
-            description: item.description,
-            created_at: item.created_at,
+              aiAssessment: item.ai_assessment || null,
+              cvAssessment: item.severity || null,
 
-            aiAssessment: item.ai_assessment || null,
-            cvAssessment: item.severity || null,
+              imageUrls,
 
-            evidence: {
-              image: item.image_url || null,
-              video: item.video_url || null,
-              audio: item.audio_url || null,
-            },
-          }));
+              evidence: {
+                images: imageUrls.map((url, i) => ({
+                  data: url,
+                  name: `Evidence image ${i + 1}`,
+                })),
+                image: imageUrls[0] || null,
+                video: item.video_url || null,
+                audio: item.audio_url || null,
+              },
+            };
+          });
 
-        // Restore locally saved image for latest report
         const saved = localStorage.getItem("rnrReport");
 
         if (saved) {
@@ -85,12 +83,38 @@ function Dashboard() {
                 Number(item.id) === Number(localReport.id)
                   ? {
                       ...item,
+
+                      imageUrls:
+                        localReport.imageUrls?.length
+                          ? localReport.imageUrls
+                          : item.imageUrls,
+
                       evidence: {
                         ...item.evidence,
+
+                        images:
+                          localReport.evidence?.images?.length
+                            ? localReport.evidence.images
+                            : item.evidence.images,
+
                         image:
                           localReport.evidence?.image ||
                           item.evidence.image,
+
+                        video:
+                          localReport.evidence?.video ||
+                          item.evidence.video,
+
+                        audio:
+                          localReport.evidence?.audio ||
+                          item.evidence.audio,
                       },
+
+                      batchAnalysis:
+                        localReport.batchAnalysis || null,
+
+                      videoAnalysis:
+                        localReport.videoAnalysis || null,
                     }
                   : item
               )
@@ -98,7 +122,7 @@ function Dashboard() {
 
             return;
           } catch {
-            // Ignore invalid localStorage data
+            // Ignore invalid localStorage
           }
         }
 
@@ -109,19 +133,15 @@ function Dashboard() {
     };
 
     fetchIncidents();
-
     const interval = setInterval(fetchIncidents, 5000);
 
     return () => clearInterval(interval);
   }, []);
 
   const getPriority = (report) => {
-    const aiPriority =
-      report?.aiAssessment?.priority?.toLowerCase();
+    const priority = report?.aiAssessment?.priority?.toLowerCase();
 
-    if (["high", "medium", "low"].includes(aiPriority)) {
-      return aiPriority;
-    }
+    if (["high", "medium", "low"].includes(priority)) return priority;
 
     const severity =
       report?.cvAssessment?.severity_level?.toLowerCase();
@@ -136,15 +156,11 @@ function Dashboard() {
   const filteredReports = useMemo(() => {
     if (filter === "all") return reports;
 
-    return reports.filter((report) => {
-      const severity =
-        report.cvAssessment?.severity_level?.toLowerCase();
-
-      return severity === filter;
-    });
+    return reports.filter(
+      (report) =>
+        report.cvAssessment?.severity_level?.toLowerCase() === filter
+    );
   }, [reports, filter]);
-
-  const latest = filteredReports[0] || null;
 
   const counts = {
     high: reports.filter((r) => getPriority(r) === "high").length,
@@ -153,27 +169,41 @@ function Dashboard() {
   };
 
   const openIncident = (incident) => {
+    const images =
+      incident.evidence?.images?.length
+        ? incident.evidence.images
+        : (incident.imageUrls || []).map((url, i) => ({
+            data: url,
+            name: `Evidence image ${i + 1}`,
+          }));
+
     localStorage.setItem(
       "rnrReport",
       JSON.stringify({
         id: incident.id,
         incidentId: incident.id,
-
         latitude: incident.latitude,
         longitude: incident.longitude,
-
         location: incident.location,
         description: incident.description,
         created_at: incident.created_at,
 
+        imageUrls: incident.imageUrls || [],
+
         evidence: {
-          image: incident.evidence?.image || null,
+          images,
+          image:
+            images[0]?.data ||
+            incident.evidence?.image ||
+            null,
           video: incident.evidence?.video || null,
           audio: incident.evidence?.audio || null,
         },
 
-        status: "ASSESSED",
+        batchAnalysis: incident.batchAnalysis || null,
+        videoAnalysis: incident.videoAnalysis || null,
 
+        status: "ASSESSED",
         aiAssessment: incident.aiAssessment || null,
         cvAssessment: incident.cvAssessment || null,
       })
@@ -182,66 +212,53 @@ function Dashboard() {
     navigate("/incident");
   };
 
-  const getMapLocation = (report) => {
-    if (
-      Number.isFinite(report?.latitude) &&
-      Number.isFinite(report?.longitude)
-    ) {
-      return [report.latitude, report.longitude];
-    }
+  const mapLocation = (report) =>
+    Number.isFinite(report?.latitude) &&
+    Number.isFinite(report?.longitude)
+      ? [report.latitude, report.longitude]
+      : [28.6139, 77.209];
 
-    return [28.6139, 77.209];
-  };
-
-  const mapCenter = latest
-    ? getMapLocation(latest)
+  const mapCenter = filteredReports.length
+    ? mapLocation(filteredReports[0])
     : [28.6139, 77.209];
 
   return (
-    <div className="min-h-screen bg-[#F7F8F5] text-[#17201A]">
+    <div className="min-h-screen bg-[#F8F9F6] text-[#263229]">
       <Navbar />
 
-      <main className="max-w-7xl mx-auto px-6 py-10">
+      <main className="max-w-7xl mx-auto px-5 md:px-8 py-8">
 
         {/* HEADER */}
         <div className="flex justify-between items-end gap-4">
           <div>
-            <p className="text-xs tracking-[0.25em] text-[#2F7D4A] font-semibold">
+            <p className="text-[9px] tracking-[0.25em] font-bold text-[#527057]">
               RESPONSE CENTER
             </p>
 
-            <h1 className="text-4xl md:text-5xl font-bold mt-3">
-              Incident Dashboard
+            <h1 className="text-3xl md:text-4xl font-bold mt-2">
+              Live Dashboard
             </h1>
 
-            <p className="text-[#68736B] mt-3">
-              Monitor newly submitted disaster incidents.
+            <p className="text-xs text-[#78827A] mt-2">
+              Every incident reported, verified and mapped in real time.
             </p>
           </div>
 
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full border border-[#BFDAC5] bg-[#EAF4EC]">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-
-            <span className="text-xs text-[#2F7D4A] font-medium">
-              SYSTEM LIVE
-            </span>
+          <div className="px-3 py-2 rounded-full bg-[#EEF4EC] text-[9px] text-[#4D7054] font-semibold">
+            ● SYSTEM LIVE
           </div>
         </div>
 
         {/* FILTER */}
-        <div className="flex items-center gap-2 mt-8">
-          <span className="text-xs font-medium">
-            Severity:
-          </span>
-
+        <div className="flex flex-wrap gap-2 mt-6">
           {["all", "low", "moderate", "severe"].map((item) => (
             <button
               key={item}
               onClick={() => setFilter(item)}
-              className={`px-3 py-1.5 rounded-lg text-xs capitalize border ${
+              className={`px-3 py-1.5 rounded-md text-[10px] capitalize border ${
                 filter === item
-                  ? "bg-[#2F7D4A] text-white border-[#2F7D4A]"
-                  : "bg-white border-[#DDE5DE] text-[#68736B]"
+                  ? "bg-[#3F6546] text-white border-[#3F6546]"
+                  : "bg-white text-[#69756D] border-[#E0E5DE]"
               }`}
             >
               {item}
@@ -249,379 +266,209 @@ function Dashboard() {
           ))}
         </div>
 
-        {/* STATS */}
-        <div className="grid md:grid-cols-4 gap-4 mt-6">
-          <Stat
-            title="High Priority"
-            value={counts.high}
-            text="Immediate attention"
-          />
+        {/* INCIDENT TABLE */}
+        <section className="mt-6 bg-white border border-[#E1E6DF] rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-[#E8ECE6]">
+            <h2 className="text-sm font-semibold">Incidents</h2>
+          </div>
 
-          <Stat
-            title="Medium Priority"
-            value={counts.medium}
-            text="Requires monitoring"
-          />
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-[#E8ECE6] text-[9px] uppercase tracking-wider text-[#849087]">
+                  <th className="px-5 py-3 font-semibold">Report</th>
+                  <th className="px-5 py-3 font-semibold">Location</th>
+                  <th className="px-5 py-3 font-semibold">Time</th>
+                  <th className="px-5 py-3 font-semibold">Severity</th>
+                  <th className="px-5 py-3 text-right"></th>
+                </tr>
+              </thead>
 
-          <Stat
-            title="Low Priority"
-            value={counts.low}
-            text="Low urgency"
-          />
+              <tbody>
+                {filteredReports.map((report) => {
+                  const priority = getPriority(report);
 
-          <Stat
-            title="Total Incidents"
+                  return (
+                    <tr
+                      key={report.id}
+                      className="border-b last:border-b-0 border-[#EDF0EB] hover:bg-[#FAFBF9]"
+                    >
+                      <td className="px-5 py-3 text-xs font-semibold">
+                        Report #{report.id}
+                      </td>
+
+                      <td className="px-5 py-3 text-xs text-[#68736B]">
+                        {report.location}
+                      </td>
+
+                      <td className="px-5 py-3 text-xs text-[#68736B]">
+                        {report.created_at
+                          ? new Date(report.created_at).toLocaleTimeString(
+                              "en-IN",
+                              {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              }
+                            )
+                          : "N/A"}
+                      </td>
+
+                      <td className="px-5 py-3">
+                        <SeverityBadge priority={priority} />
+                      </td>
+
+                      <td className="px-5 py-3 text-right">
+                        <button
+                          onClick={() => openIncident(report)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-[#DCE3DA] text-[10px] text-[#4A5F4E] hover:bg-[#EEF4EC]"
+                        >
+                          View
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {!filteredReports.length && (
+            <div className="p-10 text-center">
+              <AlertTriangle className="w-7 h-7 mx-auto text-gray-400" />
+              <p className="text-sm font-semibold mt-3">
+                No incidents
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                New submitted reports will appear automatically.
+              </p>
+            </div>
+          )}
+        </section>
+
+        {/* SUMMARY */}
+        <div className="grid md:grid-cols-4 gap-3 mt-4">
+          <Summary title="HIGH" value={counts.high} type="high" />
+          <Summary title="MODERATE" value={counts.medium} type="medium" />
+          <Summary title="LOW" value={counts.low} type="low" />
+          <Summary
+            title="ACTIVE INCIDENTS"
             value={reports.length}
-            text="New incidents"
+            type="active"
           />
         </div>
 
-        {/* LATEST + MAP */}
-        {latest && (
-          <div className="grid lg:grid-cols-5 gap-6 mt-8">
-
-            {/* LATEST INCIDENT */}
-            <div className="lg:col-span-2">
-              <div className="flex justify-between mb-4">
-                <div>
-                  <h2 className="text-lg font-semibold">
-                    Latest Incident
-                  </h2>
-
-                  <p className="text-xs text-gray-600 mt-1">
-                    Most recently submitted report
-                  </p>
-                </div>
-
-                <button
-                  onClick={() =>
-                    setNotificationOpen(!notificationOpen)
-                  }
-                  className="relative"
-                >
-                  <Bell className="w-5 h-5 text-gray-500" />
-
-                  <span className="absolute top-0 right-0 w-2.5 h-2.5 rounded-full bg-red-500" />
-                </button>
-
-                {notificationOpen && (
-                  <div className="absolute mt-8 z-50 p-4 bg-white border rounded-xl shadow-lg">
-                    <p className="text-sm font-semibold">
-                      New Incident
-                    </p>
-
-                    <p className="text-xs text-gray-500 mt-1">
-                      A new disaster report has been submitted.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <IncidentCard
-                report={latest}
-                priority={getPriority(latest)}
-                onView={() => openIncident(latest)}
-              />
-            </div>
-
-            {/* MAP */}
-            <div className="lg:col-span-3">
-              <div className="flex justify-between mb-4">
-                <div>
-                  <h2 className="text-lg font-semibold">
-                    Live Incident Map
-                  </h2>
-
-                  <p className="text-xs text-gray-600 mt-1">
-                    Locations of all new incidents
-                  </p>
-                </div>
-
-                <MapPin className="w-5 h-5 text-gray-500" />
-              </div>
-
-              <div className="h-[520px] rounded-2xl overflow-hidden border border-[#DDE5DE] shadow-sm">
-                <MapContainer
-                  center={mapCenter}
-                  zoom={11}
-                  scrollWheelZoom
-                  className="h-full w-full"
-                >
-                  <TileLayer
-                    attribution="&copy; OpenStreetMap contributors"
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  />
-
-                  {filteredReports.map((report) => {
-                    const position = getMapLocation(report);
-                    const cv = report.cvAssessment;
-
-                    const coverage =
-                      Number(cv?.flood_coverage_pct) || 0;
-
-                    const radius = Math.max(
-                      300,
-                      Math.min(3000, coverage * 30)
-                    );
-
-                    return (
-                      <div key={report.id}>
-                        <Marker position={position}>
-                          <Popup>
-                            <b>
-                              {report.aiAssessment?.disaster_type ||
-                                "Possible Incident"}
-                            </b>
-
-                            <br />
-
-                            Incident #{report.id}
-
-                            <br />
-
-                            Priority:{" "}
-                            {getPriority(report).toUpperCase()}
-
-                            <br />
-
-                            Severity:{" "}
-                            {cv?.severity_level || "N/A"}
-
-                            <br />
-
-                            <button
-                              onClick={() => openIncident(report)}
-                              className="mt-2 text-[#2F7D4A] font-semibold"
-                            >
-                              View Incident →
-                            </button>
-                          </Popup>
-                        </Marker>
-
-                        {cv && (
-                          <Circle
-                            center={position}
-                            radius={radius}
-                            pathOptions={{
-                              fillOpacity: 0.15,
-                              weight: 2,
-                            }}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                </MapContainer>
-              </div>
-
-              <p className="text-xs text-gray-600 mt-2">
-                {filteredReports.length} incident location
-                {filteredReports.length !== 1 ? "s" : ""} shown
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* EMPTY STATE */}
-        {!latest && (
-          <div className="mt-8 p-10 text-center bg-white border border-[#DDE5DE] rounded-2xl">
-            <AlertTriangle className="w-8 h-8 mx-auto text-gray-400" />
-
-            <h2 className="font-semibold mt-3">
-              No new incidents
-            </h2>
-
-            <p className="text-sm text-gray-500 mt-1">
-              New submitted reports will appear here automatically.
+        {/* MAP */}
+        <section className="mt-6 bg-white border border-[#E1E6DF] rounded-xl overflow-hidden">
+          <div className="px-5 py-4">
+            <h2 className="text-sm font-semibold">Incident Map</h2>
+            <p className="text-[10px] text-[#7B867E] mt-1">
+              Click markers to see severity, location and source.
             </p>
           </div>
-        )}
 
-        {/* ALL NEW INCIDENTS */}
-        {filteredReports.length > 0 && (
-          <section className="mt-10">
-            <div className="flex justify-between items-end mb-5">
-              <div>
-                <h2 className="text-lg font-semibold">
-                  All New Incidents
-                </h2>
+          <div className="h-[430px]">
+            <MapContainer
+              center={mapCenter}
+              zoom={11}
+              scrollWheelZoom
+              className="h-full w-full"
+            >
+              <TileLayer
+                attribution="&copy; OpenStreetMap contributors"
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
 
-                <p className="text-xs text-[#68736B] mt-1">
-                  Newly submitted disaster reports remain saved.
-                </p>
-              </div>
+              {filteredReports.map((report) => {
+                const position = mapLocation(report);
+                const cv = report.cvAssessment;
+                const coverage =
+                  Number(cv?.flood_coverage_pct) || 0;
 
-              <span className="text-xs text-[#68736B]">
-                Showing {filteredReports.length}
-              </span>
-            </div>
+                const radius = Math.max(
+                  300,
+                  Math.min(3000, coverage * 30)
+                );
 
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filteredReports.map((incident) => (
-                <IncidentCard
-                  key={incident.id}
-                  report={incident}
-                  priority={getPriority(incident)}
-                  onView={() => openIncident(incident)}
-                />
-              ))}
-            </div>
-          </section>
-        )}
+                return (
+                  <div key={report.id}>
+                    <Marker position={position}>
+                      <Popup>
+                        <b>Report #{report.id}</b>
+                        <br />
+                        Priority: {getPriority(report).toUpperCase()}
+                        <br />
+                        Severity: {cv?.severity_level || "N/A"}
+                        <br />
 
-        <div className="flex justify-end items-center gap-2 text-xs text-gray-700 mt-6">
-          <Clock className="w-3.5 h-3.5" />
+                        <button
+                          onClick={() => openIncident(report)}
+                          className="mt-2 text-[#3F6546] font-semibold"
+                        >
+                          View Incident →
+                        </button>
+                      </Popup>
+                    </Marker>
+
+                    {cv && (
+                      <Circle
+                        center={position}
+                        radius={radius}
+                        pathOptions={{
+                          fillOpacity: 0.15,
+                          weight: 2,
+                        }}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </MapContainer>
+          </div>
+        </section>
+
+        <div className="flex justify-end gap-2 items-center mt-4 text-[10px] text-[#78827A]">
+          <Clock className="w-3 h-3" />
           Dashboard updates automatically
         </div>
       </main>
 
-      <ResponderChatbot report={latest} />
+      <ResponderChatbot report={filteredReports[0] || null} />
     </div>
   );
 }
 
-/* ---------------- COMPONENTS ---------------- */
+function SeverityBadge({ priority }) {
+  const styles = {
+    high: "bg-[#FDE7E6] text-[#D44743]",
+    medium: "bg-[#FFF0DC] text-[#B56A18]",
+    low: "bg-[#FFF8D9] text-[#8C7618]",
+    unknown: "bg-gray-100 text-gray-500",
+  };
 
-function Stat({ title, value, text }) {
   return (
-    <div className="p-5 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm">
-      <p className="text-sm text-[#68736B]">
-        {title}
-      </p>
-
-      <p className="text-3xl font-bold mt-2">
-        {value}
-      </p>
-
-      <p className="text-xs text-[#68736B] mt-2">
-        {text}
-      </p>
-    </div>
+    <span
+      className={`px-2 py-1 rounded-md text-[8px] font-bold ${
+        styles[priority] || styles.unknown
+      }`}
+    >
+      {priority.toUpperCase()}
+    </span>
   );
 }
 
-function IncidentCard({ report, priority, onView }) {
-  const ai = report?.aiAssessment;
-  const cv = report?.cvAssessment;
-  const evidence = report?.evidence;
-
-  const priorityClass =
-    priority === "high"
-      ? "bg-[#DC2626]"
-      : priority === "medium"
-      ? "bg-[#F59E0B]"
-      : "bg-[#2F7D4A]";
-
-  const reportTime = report.created_at
-    ? new Date(report.created_at).toLocaleString("en-IN")
-    : "Time unavailable";
+function Summary({ title, value, type }) {
+  const styles = {
+    high: "bg-[#FDE7E6] text-[#D44743]",
+    medium: "bg-[#FFF0DC] text-[#B56A18]",
+    low: "bg-[#FFF8D9] text-[#8C7618]",
+    active: "bg-[#EAF2E7] text-[#4B704F]",
+  };
 
   return (
-    <div className="p-5 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm">
-
-      {/* PRIORITY */}
-      <div className="flex justify-between items-center">
-        <span
-          className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-white text-[10px] font-bold ${priorityClass}`}
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-white" />
-
-          {priority.toUpperCase()} PRIORITY
-        </span>
-
-        <span className="text-xs text-gray-400">
-          #{report.id}
-        </span>
-      </div>
-
-      {/* TITLE */}
-      <h3 className="text-lg font-semibold mt-4">
-        {ai?.disaster_type || "Possible Incident"}
-      </h3>
-
-      {/* LOCATION */}
-      <div className="flex items-center gap-2 text-xs text-[#68736B] mt-2">
-        <MapPin className="w-3.5 h-3.5" />
-
-        {report.location || "Location unavailable"}
-      </div>
-
-      {/* TIME */}
-      <div className="flex items-center gap-2 text-xs text-[#68736B] mt-2">
-        <Clock className="w-3.5 h-3.5" />
-
-        {reportTime}
-      </div>
-
-      {/* GEMINI */}
-      <div className="mt-4 p-3 rounded-xl bg-[#F3F7F3] border border-[#DDE5DE]">
-        <p className="text-[10px] font-semibold text-[#2F7D4A]">
-          GEMINI AI
-        </p>
-
-        <p className="text-xs text-[#68736B] mt-2">
-          Likelihood:{" "}
-          <b>{ai?.likelihood || "Unavailable"}</b>
-        </p>
-
-        {ai?.needs_human_verification && (
-          <p className="text-[10px] text-orange-500 font-semibold mt-2">
-            Human verification required
-          </p>
-        )}
-      </div>
-
-      {/* CVDL */}
-      {cv && (
-        <div className="mt-3 p-3 rounded-xl bg-[#F3F7F3] border border-[#DDE5DE]">
-          <p className="text-[10px] font-semibold text-[#2F7D4A]">
-            CVDL FLOOD ANALYSIS
-          </p>
-
-          <p className="text-xs text-[#68736B] mt-2">
-            Severity: <b>{cv.severity_level}</b>
-          </p>
-
-          <p className="text-xs text-[#68736B] mt-1">
-            Flood Coverage:{" "}
-            <b>{cv.flood_coverage_pct}%</b>
-          </p>
-        </div>
-      )}
-
-      {/* EVIDENCE */}
-      <div className="flex gap-2 mt-4 flex-wrap">
-        {evidence?.image && (
-          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
-            <Image className="w-3 h-3" />
-            Image
-          </span>
-        )}
-
-        {evidence?.video && (
-          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
-            <Video className="w-3 h-3" />
-            Video
-          </span>
-        )}
-
-        {evidence?.audio && (
-          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#F3F7F3] text-[10px] text-[#2F7D4A]">
-            <Mic className="w-3 h-3" />
-            Audio
-          </span>
-        )}
-      </div>
-
-      {/* VIEW */}
-      <button
-        onClick={onView}
-        className="w-full flex justify-between items-center mt-5 px-4 py-3 rounded-xl bg-[#2F7D4A] text-white text-xs font-semibold hover:bg-[#25663C]"
-      >
-        View Incident
-
-        <ArrowRight className="w-4 h-4" />
-      </button>
+    <div className={`rounded-xl p-4 ${styles[type]}`}>
+      <p className="text-[9px] font-bold">{title}</p>
+      <p className="text-2xl font-bold mt-1">{value}</p>
     </div>
   );
 }

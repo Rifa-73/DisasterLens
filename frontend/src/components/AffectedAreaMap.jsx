@@ -17,24 +17,29 @@ export default function AffectedAreaMap({
   const lng = Number(longitude);
   const floodCoverage = Number(coverage) || 0;
 
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return null;
-  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
-  const radius = Math.max(
-    300,
-    Math.min(3000, floodCoverage * 30)
-  );
+  const radius = Math.max(300, Math.min(3000, floodCoverage * 30));
 
   return (
-    <div className="mt-8 p-6 rounded-2xl border border-[#DDE5DE] bg-white shadow-sm">
-      <h2 className="text-lg font-semibold">Affected Area</h2>
+    <div className="mt-6 bg-white border border-[#E1E6DF] rounded-xl p-5">
+      <div className="flex justify-between items-start">
+        <div>
+          <p className="text-[9px] tracking-[0.18em] font-bold text-[#718075]">
+            AFFECTED AREA
+          </p>
 
-      <p className="text-xs text-gray-600 mt-1">
-        Estimated impact zone based on CVDL flood coverage
-      </p>
+          <p className="text-xs text-[#7A847D] mt-1">
+            Estimated impact zone from CVDL flood coverage
+          </p>
+        </div>
 
-      <div className="h-[400px] rounded-xl overflow-hidden mt-4">
+        <span className="px-2 py-1 rounded-md bg-[#EEF4EC] text-[9px] text-[#426A4A] font-semibold">
+          {floodCoverage}%
+        </span>
+      </div>
+
+      <div className="h-[380px] rounded-lg overflow-hidden mt-4">
         <MapContainer
           center={[lat, lng]}
           zoom={13}
@@ -59,14 +64,9 @@ export default function AffectedAreaMap({
           <Circle
             center={[lat, lng]}
             radius={radius}
-            pathOptions={{ fillOpacity: 0.2, weight: 2 }}
+            pathOptions={{ fillOpacity: 0.16, weight: 2 }}
           />
         </MapContainer>
-      </div>
-
-      <div className="mt-3 text-sm text-gray-700">
-        <b>Flood Coverage:</b> {floodCoverage}% &nbsp;•&nbsp;
-        <b>Severity:</b> {severity}
       </div>
     </div>
   );

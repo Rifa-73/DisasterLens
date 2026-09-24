@@ -30,15 +30,10 @@ function ResponderChatbot({ report }) {
           incident: {
             description: report?.description,
             location: report?.location,
-
             ai_assessment: report?.aiAssessment,
-
             cvdl: report?.cvAssessment,
-
             evidence: report?.evidence,
-
             evidence_assessment: report?.evidenceAssessment,
-
             human_verification_required:
               report?.evidenceAssessment?.human_verification_required ||
               report?.aiAssessment?.needs_human_verification,
@@ -46,9 +41,7 @@ function ResponderChatbot({ report }) {
         }),
       });
 
-      if (!res.ok) {
-        throw new Error("Chat request failed");
-      }
+      if (!res.ok) throw new Error("Chat request failed");
 
       const data = await res.json();
 
@@ -62,10 +55,7 @@ function ResponderChatbot({ report }) {
     } catch {
       setMessages((m) => [
         ...m,
-        {
-          type: "bot",
-          text: "Unable to connect to the AI assistant.",
-        },
+        { type: "bot", text: "Unable to connect to the AI assistant." },
       ]);
     } finally {
       setLoading(false);
@@ -77,51 +67,45 @@ function ResponderChatbot({ report }) {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-[2000] w-14 h-14 rounded-full bg-[#2F7D4A] text-white shadow-lg flex items-center justify-center hover:bg-[#25663C] transition"
+          className="fixed bottom-5 right-5 z-[2000] w-12 h-12 rounded-full bg-[#3F6546] text-white shadow-lg flex items-center justify-center"
         >
-          <Bot className="w-6 h-6" />
+          <Bot className="w-5 h-5" />
         </button>
       )}
 
       {open && (
-        <div className="fixed bottom-6 right-6 z-[2000] w-80 md:w-96 bg-white border border-[#DDE5DE] rounded-2xl shadow-xl overflow-hidden">
+        <div className="fixed bottom-5 right-5 z-[2000] w-[330px] bg-white border border-[#DDE4DB] rounded-xl shadow-xl overflow-hidden">
 
-          {/* Header */}
-          <div className="flex justify-between items-center px-5 py-4 bg-[#2F7D4A] text-white">
-            <div className="flex items-center gap-3">
-              <Bot className="w-5" />
+          <div className="px-4 py-3 bg-[#3F6546] text-white flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <Bot className="w-4 h-4" />
               <div>
-                <p className="font-semibold text-sm">
-                  Responder Assistant
-                </p>
-                <p className="text-xs text-white/80">
-                  Incident support
-                </p>
+                <p className="font-semibold text-xs">Lena · Response Assistant</p>
+                <p className="text-[9px] text-white/70">Online</p>
               </div>
             </div>
 
             <button onClick={() => setOpen(false)}>
-              <X className="w-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Messages */}
-          <div className="h-72 overflow-y-auto p-4 bg-[#F7F8F5]">
+          <div className="h-64 overflow-y-auto p-3 bg-[#F7F8F5]">
             {!messages.length && (
               <>
-                <div className="p-3 rounded-xl bg-white border border-[#DDE5DE] text-sm">
-                  <p className="font-medium">Hello 👋</p>
-                  <p className="text-[#68736B] mt-1">
-                    I can help you understand this incident.
+                <div className="p-3 bg-white border border-[#E0E6DE] rounded-lg text-xs">
+                  <p className="font-semibold">Hi 👋</p>
+                  <p className="text-[#78827A] mt-1">
+                    Ask me about this incident or how to respond.
                   </p>
                 </div>
 
-                <div className="flex flex-wrap gap-2 mt-4">
+                <div className="flex flex-wrap gap-1.5 mt-3">
                   {suggestions.map((s) => (
                     <button
                       key={s}
                       onClick={() => sendMessage(s)}
-                      className="px-3 py-2 rounded-lg bg-white border border-[#DDE5DE] text-xs text-[#2F7D4A] hover:bg-[#EAF4EC]"
+                      className="px-2 py-1.5 rounded-md bg-white border border-[#DDE4DB] text-[9px] text-[#426A4A]"
                     >
                       {s}
                     </button>
@@ -133,10 +117,10 @@ function ResponderChatbot({ report }) {
             {messages.map((m, i) => (
               <div
                 key={i}
-                className={`mb-3 p-3 rounded-xl text-sm ${
+                className={`mb-2 p-2.5 rounded-lg text-xs ${
                   m.type === "user"
-                    ? "ml-8 bg-[#2F7D4A] text-white"
-                    : "mr-8 bg-white border border-[#DDE5DE]"
+                    ? "ml-8 bg-[#3F6546] text-white"
+                    : "mr-8 bg-white border border-[#DDE4DB]"
                 }`}
               >
                 {m.text}
@@ -144,30 +128,27 @@ function ResponderChatbot({ report }) {
             ))}
 
             {loading && (
-              <div className="mr-8 p-3 rounded-xl bg-white border border-[#DDE5DE] text-sm text-gray-500">
+              <div className="mr-8 p-2.5 rounded-lg bg-white border text-xs text-gray-500">
                 Analyzing incident...
               </div>
             )}
           </div>
 
-          {/* Input */}
-          <div className="p-3 border-t border-[#DDE5DE] flex gap-2">
+          <div className="p-2 border-t border-[#DDE4DB] flex gap-2">
             <input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) =>
-                e.key === "Enter" && sendMessage()
-              }
-              placeholder="Ask about this incident..."
-              className="flex-1 px-3 py-2 rounded-lg border border-[#DDE5DE] text-sm outline-none focus:border-[#2F7D4A]"
+              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+              placeholder="Type a message..."
+              className="flex-1 px-3 py-2 rounded-lg bg-[#F5F7F3] text-xs outline-none"
             />
 
             <button
               onClick={() => sendMessage()}
               disabled={loading}
-              className="w-10 rounded-lg bg-[#2F7D4A] text-white flex items-center justify-center disabled:opacity-50"
+              className="w-9 rounded-lg bg-[#3F6546] text-white flex items-center justify-center disabled:opacity-50"
             >
-              <Send className="w-4" />
+              <Send className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
